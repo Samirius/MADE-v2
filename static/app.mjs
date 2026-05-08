@@ -332,7 +332,7 @@ async function createSession() {
     appendMessage({ type: "error", userId: "system", content: "Clone not yet implemented. Clone manually and use local path." });
     return;
   } else {
-    workDir = process.cwd(); // fresh = server default
+    workDir = ""; // fresh = let server use its default
   }
 
   try {
