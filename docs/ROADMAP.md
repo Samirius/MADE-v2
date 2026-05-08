@@ -45,11 +45,11 @@
 - [ ] Session workDir validation
 
 ### Sprint 5: Ship (1-2 days)
-- [ ] Dockerfile + docker-compose.yml
-- [ ] GitHub Actions CI (lint + test)
-- [ ] Security hardening (CORS, path traversal, command safety)
-- [ ] API.md documentation
-- [ ] README with install guide
+- [x] Dockerfile + docker-compose.yml
+- [x] GitHub Actions CI (lint + test)
+- [x] Security hardening (CORS, path traversal, command safety)
+- [x] API.md documentation
+- [x] README with install guide
 - [ ] Tag v0.1.0, GitHub Release
 
 ## Milestone 2: Collaboration (Post-MVP)

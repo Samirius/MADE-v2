@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+    branches: [main, main-*]
+  pull_request:
+    branches: [main, main-*]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint (syntax check)
+        run: node --check src/server.mjs && node --check src/agent/registry.mjs
+
+      - name: Run tests
+        run: npm test

@@ -314,6 +314,15 @@ function handleAPI(req, res, urlPath, method) {
     } catch (e) { return json(res, { error: { code: "GIT_ERROR", message: e.message } }, 500); }
   }
 
+  // ── Git discard
+  if (subPath === "/git/discard" && method === "POST") {
+    try {
+      execSync("git checkout -- .", { cwd: session.workDir, encoding: "utf-8" });
+      execSync("git clean -fd", { cwd: session.workDir, encoding: "utf-8" });
+      return json(res, { ok: true });
+    } catch (e) { return json(res, { error: { code: "GIT_ERROR", message: e.message } }, 500); }
+  }
+
   // ── Git commit
   if (subPath === "/git/commit" && method === "POST") {
     return readBody().then(body => {

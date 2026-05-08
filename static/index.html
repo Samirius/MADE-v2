@@ -73,6 +73,10 @@
             <div id="file-tree" class="file-tree"></div>
           </div>
           <div class="panel-section">
+            <h3>Changes</h3>
+            <div id="changed-files" class="changed-files"></div>
+          </div>
+          <div class="panel-section">
             <h3>Git</h3>
             <div id="git-branch" class="git-info">—</div>
             <div id="git-status" class="git-status"></div>
@@ -80,6 +84,13 @@
               <button data-action="commit" class="primary small">Approve &amp; Commit</button>
               <button data-action="discard" class="small">Discard</button>
             </div>
+          </div>
+          <div id="diff-panel" class="panel-section diff-panel" style="display:none">
+            <div class="diff-header">
+              <h3>Diff</h3>
+              <button data-action="close-diff" class="small">Close</button>
+            </div>
+            <div id="diff-content" class="diff-content"></div>
           </div>
         </div>
       </div>

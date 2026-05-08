@@ -7,6 +7,10 @@ let currentSession = null;
 let ws = null;
 let agents = [];
 
+// Track streamed output for command cards
+let currentStreamOutput = "";
+let changedFileList = [];
+
 // ─── Init ──────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", async () => {
   // Check if user exists in localStorage
@@ -56,12 +60,15 @@ async function loadSessions() {
     const res = await fetch(`${API}/api/sessions`);
     const sessions = await res.json();
     const list = document.getElementById("session-list");
-    list.innerHTML = sessions.map(s => `
-      <div class="session-item ${currentSession?.id === s.id ? 'active' : ''}" onclick="selectSession('${s.id}')">
-        <span class="session-name">${s.name}</span>
-        <span class="session-meta">${s.agentId} · ${new Date(s.createdAt).toLocaleDateString()}</span>
-      </div>
-    `).join("");
+    list.innerHTML = "";
+    sessions.forEach(s => {
+      const div = document.createElement("div");
+      div.className = `session-item ${currentSession?.id === s.id ? "active" : ""}`;
+      div.innerHTML = `<span class="session-name">${escapeHtml(s.name)}</span>
+        <span class="session-meta">${escapeHtml(s.agentId)} · ${new Date(s.createdAt).toLocaleDateString()}</span>`;
+      div.addEventListener("click", () => selectSession(s.id));
+      list.appendChild(div);
+    });
   } catch {}
 }
 
@@ -81,7 +88,7 @@ async function selectSession(id) {
   // Load agent selector
   const select = document.getElementById("agent-select");
   select.innerHTML = agents.map(a =>
-    `<option value="${a.id}" ${!a.available ? 'disabled' : ''} ${a.id === currentSession.agentId ? 'selected' : ''}>${a.name} ${a.available ? '✓' : '(not installed)'}</option>`
+    `<option value="${a.id}" ${!a.available ? 'disabled' : ''} ${a.id === currentSession.agentId ? 'selected' : ''}>${escapeHtml(a.name)} ${a.available ? '✓' : '(not installed)'}</option>`
   ).join("");
 
   // Connect WebSocket
@@ -95,6 +102,9 @@ async function selectSession(id) {
 
   // Load git status
   await loadGitStatus(id);
+
+  // Hide diff panel on session switch
+  document.getElementById("diff-panel").style.display = "none";
 
   // Refresh session list (highlight active)
   await loadSessions();
@@ -120,16 +130,12 @@ function connectWS(sessionId) {
     if (msg.type === "agent_start") {
       appendMessage(msg);
       setAgentStatus("working");
+      currentStreamOutput = "";
     } else if (msg.type === "agent_stream") {
       appendStream(msg);
+      currentStreamOutput += msg.content || "";
     } else if (msg.type === "agent_done") {
-      appendMessage(msg);
-      setAgentStatus("idle");
-      document.getElementById("btn-stop").style.display = "none";
-      document.getElementById("btn-send").style.display = "";
-      // Refresh git status and files
-      loadGitStatus(sessionId);
-      loadFiles(sessionId, "");
+      handleAgentDone(msg, sessionId);
     } else if (msg.type === "connected") {
       console.log("WS connected to session", sessionId);
     }
@@ -140,6 +146,65 @@ function connectWS(sessionId) {
     // Reconnect after 3s
     setTimeout(() => { if (currentSession?.id === sessionId) connectWS(sessionId); }, 3000);
   };
+}
+
+// ─── FEATURE 1: Command Output Card on agent_done ──────
+function handleAgentDone(msg, sessionId) {
+  setAgentStatus("idle");
+  document.getElementById("btn-stop").style.display = "none";
+  document.getElementById("btn-send").style.display = "";
+
+  const exitCode = msg.metadata?.exitCode ?? 0;
+  const output = currentStreamOutput || msg.content || "";
+  currentStreamOutput = "";
+
+  appendCommandCard(exitCode, output);
+
+  // FEATURE 2: auto-refresh git status and files after agent run
+  loadGitStatus(sessionId);
+  loadFiles(sessionId, "");
+}
+
+function appendCommandCard(exitCode, output) {
+  const container = document.getElementById("messages");
+  const lines = output.split("\n");
+  const isLong = lines.length > 10;
+  const success = exitCode === 0;
+
+  const card = document.createElement("div");
+  card.className = "cmd-card";
+
+  // Header
+  const header = document.createElement("div");
+  header.className = "cmd-card-header";
+
+  const badge = document.createElement("span");
+  badge.className = `exit-badge ${success ? "success" : "failure"}`;
+  badge.textContent = `exit ${exitCode}`;
+
+  const toggleBtn = document.createElement("button");
+  toggleBtn.className = "cmd-card-toggle";
+  toggleBtn.textContent = isLong ? "▶ Show output" : "▼ Hide output";
+
+  header.appendChild(badge);
+  header.appendChild(toggleBtn);
+
+  // Body
+  const body = document.createElement("div");
+  body.className = "cmd-card-body";
+  if (isLong) body.classList.add("collapsed");
+  body.textContent = output;
+
+  // Toggle handler
+  header.addEventListener("click", () => {
+    const collapsed = body.classList.toggle("collapsed");
+    toggleBtn.textContent = collapsed ? "▶ Show output" : "▼ Hide output";
+  });
+
+  card.appendChild(header);
+  card.appendChild(body);
+  container.appendChild(card);
+  container.scrollTop = container.scrollHeight;
 }
 
 // ─── Messages ───────────────────────────────────────────
@@ -161,7 +226,7 @@ function appendMessage(msg) {
   const label = msg.userId === currentUser?.name ? currentUser.name : msg.userId;
 
   div.className = `msg ${typeClass}`;
-  div.innerHTML = `<div class="msg-label">${label}</div><div class="msg-content">${escapeHtml(msg.content)}</div>`;
+  div.innerHTML = `<div class="msg-label">${escapeHtml(label)}</div><div class="msg-content">${escapeHtml(msg.content)}</div>`;
   container.appendChild(div);
   container.scrollTop = container.scrollHeight;
 }
@@ -234,10 +299,17 @@ async function loadFiles(sessionId, path) {
     if (!Array.isArray(entries)) return;
 
     const tree = document.getElementById("file-tree");
-    tree.innerHTML = entries
+    tree.innerHTML = "";
+    entries
       .filter(e => !e.name.startsWith(".") && e.name !== "node_modules")
-      .map(e => `<div class="file-entry ${e.type === 'dir' ? 'dir' : ''}" onclick="fileClick('${sessionId}','${path}/${e.name}',${e.type === 'dir'})">${e.type === 'dir' ? '📁' : '📄'} ${e.name} ${e.size ? `(${formatSize(e.size)})` : ''}</div>`)
-      .join("");
+      .forEach(e => {
+        const div = document.createElement("div");
+        const isChanged = changedFileList.some(cf => cf.path === `${path}/${e.name}`.replace(/^\//, ""));
+        div.className = `file-entry ${e.type === "dir" ? "dir" : ""} ${isChanged ? "changed" : ""}`;
+        div.textContent = `${e.type === "dir" ? "📁" : "📄"} ${e.name} ${e.size ? `(${formatSize(e.size)})` : ""}`;
+        div.addEventListener("click", () => fileClick(sessionId, `${path}/${e.name}`, e.type === "dir"));
+        tree.appendChild(div);
+      });
   } catch {}
 }
 
@@ -267,26 +339,194 @@ async function loadGitStatus(sessionId) {
   try {
     const res = await fetch(`${API}/api/sessions/${sessionId}/git/status`);
     const data = await res.json();
+    if (data.error) return;
+
+    // Update branch info
     if (data.branch) {
       document.getElementById("git-branch").textContent = `${data.branch} (${data.modified} changed)`;
+    }
+
+    // FEATURE 2: Parse changed files and display in "Changes" section
+    changedFileList = parseGitStatus(data.raw || "");
+    renderChangedFiles(changedFileList);
+
+    // Also update status text area
+    const statusEl = document.getElementById("git-status");
+    if (data.lastCommit) {
+      statusEl.textContent = data.lastCommit;
     }
   } catch {}
 }
 
+function parseGitStatus(raw) {
+  if (!raw || !raw.trim()) return [];
+  return raw.split("\n").filter(l => l.trim()).map(line => {
+    const statusCode = line.slice(0, 2);
+    const filePath = line.slice(3).trim();
+    let changeType = "modified";
+    if (statusCode.includes("A") || statusCode.includes("??")) changeType = "added";
+    else if (statusCode.includes("D")) changeType = "deleted";
+    else if (statusCode.includes("M")) changeType = "modified";
+    else if (statusCode.trim() === "??" ) changeType = "untracked";
+    return { path: filePath, status: statusCode.trim(), changeType };
+  });
+}
+
+function renderChangedFiles(files) {
+  const container = document.getElementById("changed-files");
+  if (!files.length) {
+    container.innerHTML = '<div class="no-changes">No changes detected</div>';
+    return;
+  }
+  container.innerHTML = "";
+  files.forEach(f => {
+    const entry = document.createElement("div");
+    entry.className = "changed-file-entry";
+    entry.dataset.filepath = f.path;
+
+    const badge = document.createElement("span");
+    badge.className = `change-badge ${f.changeType}`;
+    badge.textContent = f.changeType.toUpperCase();
+
+    const name = document.createElement("span");
+    name.textContent = f.path;
+
+    entry.appendChild(badge);
+    entry.appendChild(name);
+
+    // FEATURE 3: Click to show diff for this file
+    entry.addEventListener("click", () => showDiff(f.path));
+
+    container.appendChild(entry);
+  });
+}
+
+// ─── FEATURE 3: Diff Viewer ────────────────────────────
+async function showDiff(filePath) {
+  if (!currentSession) return;
+  const panel = document.getElementById("diff-panel");
+  const content = document.getElementById("diff-content");
+
+  panel.style.display = "block";
+  content.innerHTML = "Loading diff...";
+
+  try {
+    const res = await fetch(`${API}/api/sessions/${currentSession.id}/git/diff`);
+    const data = await res.json();
+    if (data.error) {
+      content.innerHTML = `<div class="diff-line" style="color:var(--red)">Error: ${escapeHtml(data.error.message || "Failed to load diff")}</div>`;
+      return;
+    }
+
+    const fullDiff = data.diff || "";
+    // Filter diff to show sections related to clicked file
+    const filtered = filterDiffForFile(fullDiff, filePath);
+    content.innerHTML = "";
+
+    if (!filtered.trim()) {
+      content.innerHTML = `<div class="diff-line" style="color:var(--text2)">No diff available for ${escapeHtml(filePath)}</div>`;
+      return;
+    }
+
+    filtered.split("\n").forEach(line => {
+      const span = document.createElement("span");
+      span.className = "diff-line";
+      if (line.startsWith("+++") || line.startsWith("---")) {
+        span.classList.add("hunk");
+      } else if (line.startsWith("@@")) {
+        span.classList.add("hunk");
+      } else if (line.startsWith("+")) {
+        span.classList.add("added");
+      } else if (line.startsWith("-")) {
+        span.classList.add("removed");
+      } else {
+        span.classList.add("context");
+      }
+      span.textContent = line;
+      content.appendChild(span);
+      content.appendChild(document.createTextNode("\n"));
+    });
+  } catch (e) {
+    content.innerHTML = `<div class="diff-line" style="color:var(--red)">Error loading diff: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function filterDiffForFile(diff, filePath) {
+  // Parse unified diff: find sections starting with --- a/file or +++ b/file
+  const lines = diff.split("\n");
+  const result = [];
+  let inFile = false;
+  const basename = filePath.split("/").pop();
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    // Check for file header lines
+    if (line.startsWith("diff --git")) {
+      // Check if this diff section is for our file
+      if (line.includes(filePath) || line.includes(basename)) {
+        inFile = true;
+      } else {
+        inFile = false;
+      }
+    }
+    if (inFile) {
+      result.push(line);
+    }
+  }
+
+  // If no exact match, return the full diff (for untracked files etc.)
+  return result.length > 0 ? result.join("\n") : diff;
+}
+
+// ─── FEATURE 4: Approve/Reject Changes UI ──────────────
 async function commitChanges() {
   if (!currentSession) return;
-  const message = prompt("Commit message:");
+
+  const message = prompt("Enter commit message:");
   if (!message) return;
 
-  const res = await fetch(`${API}/api/sessions/${currentSession.id}/git/commit`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message }),
-  });
-  const data = await res.json();
-  if (data.ok) {
-    appendMessage({ type: "system", userId: "system", content: `Committed: ${data.sha}` });
-    loadGitStatus(currentSession.id);
+  if (!confirm(`Approve and commit changes?\n\nMessage: ${message}`)) return;
+
+  try {
+    const res = await fetch(`${API}/api/sessions/${currentSession.id}/git/commit`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message }),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      appendMessage({ type: "system", userId: "system", content: `Committed: ${data.sha}` });
+      loadGitStatus(currentSession.id);
+      loadFiles(currentSession.id, "");
+      document.getElementById("diff-panel").style.display = "none";
+    } else {
+      appendMessage({ type: "error", userId: "system", content: `Commit failed: ${data.error?.message || "Unknown error"}` });
+    }
+  } catch (e) {
+    appendMessage({ type: "error", userId: "system", content: `Commit failed: ${e.message}` });
+  }
+}
+
+async function discardChanges() {
+  if (!currentSession) return;
+
+  if (!confirm("Are you sure you want to discard all uncommitted changes?\nThis cannot be undone.")) return;
+
+  try {
+    const res = await fetch(`${API}/api/sessions/${currentSession.id}/git/discard`, {
+      method: "POST",
+    });
+    const data = await res.json();
+    if (data.ok) {
+      appendMessage({ type: "system", userId: "system", content: "Changes discarded." });
+      loadGitStatus(currentSession.id);
+      loadFiles(currentSession.id, "");
+      document.getElementById("diff-panel").style.display = "none";
+    } else {
+      appendMessage({ type: "error", userId: "system", content: `Discard failed: ${data.error?.message || "Unknown error"}` });
+    }
+  } catch (e) {
+    appendMessage({ type: "error", userId: "system", content: `Discard failed: ${e.message}` });
   }
 }
 
@@ -296,25 +536,26 @@ function showNewSessionModal() {
 
   // Populate agent picker
   const picker = document.getElementById("agent-picker");
-  picker.innerHTML = agents.map(a => `
-    <div class="agent-option ${a.available ? 'available' : 'unavailable'}" data-agent="${a.id}">
-      <span class="dot ${a.available ? 'on' : 'off'}"></span>
-      <span>${a.name}</span>
-      <span style="color:var(--text2);font-size:10px">${a.cliCommand}</span>
-    </div>
-  `).join("");
-
-  // Wire agent selection clicks
-  document.querySelectorAll('.agent-option.available').forEach(el => {
-    el.addEventListener('click', () => selectAgent(el.dataset.agent));
+  picker.innerHTML = "";
+  agents.forEach(a => {
+    const div = document.createElement("div");
+    div.className = `agent-option ${a.available ? 'available' : 'unavailable'}`;
+    div.dataset.agent = a.id;
+    div.innerHTML = `<span class="dot ${a.available ? 'on' : 'off'}"></span>
+      <span>${escapeHtml(a.name)}</span>
+      <span style="color:var(--text2);font-size:10px">${escapeHtml(a.cliCommand || '')}</span>`;
+    if (a.available) {
+      div.addEventListener("click", () => selectAgent(a.id, div));
+    }
+    picker.appendChild(div);
   });
 }
 
 let selectedAgent = null;
-function selectAgent(id) {
+function selectAgent(id, el) {
   selectedAgent = id;
-  document.querySelectorAll(".agent-option").forEach(el => el.style.borderColor = "var(--border)");
-  event.currentTarget.style.borderColor = "var(--accent)";
+  document.querySelectorAll(".agent-option").forEach(opt => opt.style.borderColor = "var(--border)");
+  el.style.borderColor = "var(--accent)";
 }
 
 function hideModal() {
@@ -399,6 +640,9 @@ document.querySelectorAll("[data-action='create']").forEach(el => el.addEventLis
 document.querySelectorAll("[data-action='onboard']").forEach(el => el.addEventListener("click", completeOnboarding));
 document.querySelectorAll("[data-action='commit']").forEach(el => el.addEventListener("click", commitChanges));
 document.querySelectorAll("[data-action='discard']").forEach(el => el.addEventListener("click", discardChanges));
+document.querySelectorAll("[data-action='close-diff']").forEach(el => el.addEventListener("click", () => {
+  document.getElementById("diff-panel").style.display = "none";
+}));
 // Also support buttons that just have the right ID/text
 document.querySelectorAll("button").forEach(btn => {
   if (btn.textContent.trim() === "Create your first session") btn.addEventListener("click", showNewSessionModal);

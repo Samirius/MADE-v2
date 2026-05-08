@@ -1,0 +1,13 @@
+services:
+  made:
+    build: .
+    ports:
+      - "3100:3100"
+    volumes:
+      - made-data:/app/.made-data
+    env_file:
+      - .env
+    restart: unless-stopped
+
+volumes:
+  made-data:

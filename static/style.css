@@ -198,6 +198,73 @@ body { font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace; backgrou
 .dot.on { background: var(--green); }
 .dot.off { background: var(--red); }
 
+/* ─── Changed Files ─── */
+.changed-files { font-size: 12px; max-height: 200px; overflow-y: auto; }
+.changed-file-entry {
+  display: flex; align-items: center; gap: 6px;
+  padding: 4px 8px; cursor: pointer; border-radius: 3px;
+  font-size: 12px; color: var(--text);
+}
+.changed-file-entry:hover { background: var(--surface2); }
+.changed-file-entry .change-badge {
+  font-size: 10px; padding: 1px 5px; border-radius: 3px; font-weight: 600;
+}
+.changed-file-entry .change-badge.modified { background: var(--orange); color: #000; }
+.changed-file-entry .change-badge.added { background: var(--green); color: #000; }
+.changed-file-entry .change-badge.deleted { background: var(--red); color: #fff; }
+.changed-file-entry .change-badge.untracked { background: var(--accent); color: #fff; }
+.no-changes { font-size: 11px; color: var(--text2); padding: 4px 0; }
+
+/* ─── Diff Panel ─── */
+.diff-panel { padding-bottom: 16px; }
+.diff-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.diff-header h3 { margin-bottom: 0; }
+.diff-content {
+  font-size: 11px; font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+  background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 8px; overflow-x: auto; max-height: 400px; overflow-y: auto;
+  white-space: pre; line-height: 1.5;
+}
+.diff-line { display: block; padding: 0 4px; }
+.diff-line.added { background: rgba(34, 197, 94, 0.15); color: var(--green); }
+.diff-line.removed { background: rgba(239, 68, 68, 0.15); color: var(--red); }
+.diff-line.hunk { color: var(--accent); font-weight: 600; }
+.diff-line.context { color: var(--text2); }
+
+/* ─── Command Output Cards ─── */
+.cmd-card {
+  margin-bottom: 12px; border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--surface); overflow: hidden;
+}
+.cmd-card-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 10px; background: var(--surface2); cursor: pointer;
+}
+.cmd-card-header:hover { background: var(--border); }
+.exit-badge {
+  font-size: 10px; font-weight: 700; padding: 2px 8px;
+  border-radius: 10px; letter-spacing: 0.5px;
+}
+.exit-badge.success { background: var(--green); color: #000; }
+.exit-badge.failure { background: var(--red); color: #fff; }
+.cmd-card-toggle {
+  font-size: 11px; color: var(--text2); background: none; border: none;
+  cursor: pointer; font-family: inherit;
+}
+.cmd-card-toggle:hover { color: var(--text); }
+.cmd-card-body {
+  padding: 8px 10px; font-size: 12px; font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+  white-space: pre-wrap; word-break: break-word; line-height: 1.5;
+  max-height: 200px; overflow-y: auto; color: var(--text);
+}
+.cmd-card-body.collapsed { max-height: 0; padding: 0 10px; overflow: hidden; }
+
+/* File tree changed highlight */
+.file-entry.changed {
+  background: rgba(245, 158, 11, 0.1);
+  border-left: 2px solid var(--orange);
+}
+
 /* ─── Scrollbar ─── */
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
