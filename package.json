@@ -1,0 +1,33 @@
+{
+  "name": "made",
+  "version": "0.1.0",
+  "description": "Multiplayer Agentic Development Environment — self-hosted, multi-agent, real-time coding workspace",
+  "main": "src/server.mjs",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": [
+    "ai",
+    "coding",
+    "agent",
+    "workspace",
+    "multi-agent",
+    "self-hosted"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "directories": {
+    "doc": "docs",
+    "test": "test"
+  },
+  "author": "",
+  "dependencies": {
+    "node-pty": "^1.1.0",
+    "ws": "^8.20.0"
+  }
+}

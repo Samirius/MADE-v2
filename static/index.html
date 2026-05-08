@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MADE — Multiplayer Agentic Development Environment</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div id="app">
+  <!-- Sidebar -->
+  <aside id="sidebar">
+    <div class="sidebar-header">
+      <h1>MADE</h1>
+      <span class="version">v0.1.0</span>
+    </div>
+    <button id="btn-new-session" onclick="showNewSessionModal()">+ New Session</button>
+    <div id="session-list"></div>
+    <div class="sidebar-footer">
+      <div id="agent-status" class="status-idle">No agent</div>
+    </div>
+  </aside>
+
+  <!-- Main area -->
+  <main id="workspace">
+    <div id="empty-state" class="empty-state">
+      <h2>Welcome to MADE</h2>
+      <p>Connect your repo, pick an agent, start coding.</p>
+      <button onclick="showNewSessionModal()">Create your first session</button>
+    </div>
+
+    <!-- Active session view (hidden until session selected) -->
+    <div id="session-view" style="display:none">
+      <header id="session-header">
+        <span id="session-name">—</span>
+        <span id="session-agent" class="badge">—</span>
+        <span id="git-branch" class="badge">—</span>
+      </header>
+
+      <div id="main-split">
+        <!-- File browser -->
+        <div id="file-panel">
+          <h3>Files</h3>
+          <div id="file-tree"></div>
+        </div>
+
+        <!-- Chat area -->
+        <div id="chat-panel">
+          <div id="messages"></div>
+          <div id="chat-input-area">
+            <select id="agent-select"></select>
+            <input id="chat-input" type="text" placeholder="Send a prompt to your agent..." />
+            <button id="btn-send" onclick="sendPrompt()">Send</button>
+            <button id="btn-stop" onclick="abortAgent()" style="display:none">Stop</button>
+          </div>
+        </div>
+
+        <!-- Diff panel -->
+        <div id="diff-panel" style="display:none">
+          <h3>Changes</h3>
+          <div id="diff-content"></div>
+          <div id="diff-actions">
+            <button onclick="commitChanges()">Approve & Commit</button>
+            <button onclick="discardChanges()">Discard</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- New Session Modal -->
+<div id="modal-overlay" class="modal-overlay" style="display:none">
+  <div class="modal">
+    <h2>New Session</h2>
+    <div class="modal-step" id="step-1">
+      <label>Session Name</label>
+      <input id="new-name" type="text" placeholder="My Project" />
+    </div>
+    <div class="modal-step" id="step-2">
+      <label>Project</label>
+      <div class="radio-group">
+        <label><input type="radio" name="project-type" value="local" checked /> Local directory</label>
+        <label><input type="radio" name="project-type" value="clone" /> Clone from URL</label>
+        <label><input type="radio" name="project-type" value="fresh" /> Fresh project</label>
+      </div>
+      <input id="new-workdir" type="text" placeholder="/path/to/your/project" />
+      <input id="new-clone-url" type="text" placeholder="https://github.com/user/repo.git" style="display:none" />
+    </div>
+    <div class="modal-step" id="step-3">
+      <label>Agent</label>
+      <div id="agent-picker"></div>
+    </div>
+    <div class="modal-actions">
+      <button onclick="hideModal()">Cancel</button>
+      <button onclick="createSession()" class="primary">Create & Start</button>
+    </div>
+  </div>
+</div>
+
+<!-- Onboarding Modal (first visit) -->
+<div id="onboard-overlay" class="modal-overlay" style="display:none">
+  <div class="modal">
+    <h2>Welcome to MADE</h2>
+    <p>The open, self-hosted, multi-agent coding workspace.</p>
+    <label>Your Name</label>
+    <input id="user-name" type="text" placeholder="Samir" />
+    <button onclick="completeOnboarding()" class="primary">Get Started</button>
+  </div>
+</div>
+
+<script src="/app.mjs"></script>
+</body>
+</html>
