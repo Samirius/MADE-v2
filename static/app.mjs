@@ -1,81 +1,181 @@
-// MADE v2 — Frontend Application
-// Vanilla JS, no framework, no build step
+// MADE v2 — Frontend Application (complete rewrite)
+// Vanilla ES module — no framework, no build step, no globals for onclick
 
-const API = "";  // same origin
+const API = ""; // same origin
 let currentUser = null;
 let currentSession = null;
 let ws = null;
 let agents = [];
-
-// Track streamed output for command cards
+let currentFilePath = ""; // breadcrumb tracker for file browser
+let selectedAgent = null;
+let lastStreamDiv = null;
 let currentStreamOutput = "";
-let changedFileList = [];
 
-// ─── Init ──────────────────────────────────────────────
+// ─── Utility ───────────────────────────────────────────────
+function escapeHtml(text) {
+  if (text == null) return "";
+  const el = document.createElement("span");
+  el.textContent = String(text);
+  return el.innerHTML;
+}
+
+function formatTime(ts) {
+  if (!ts) return "";
+  const d = new Date(ts);
+  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function formatSize(bytes) {
+  if (bytes == null) return "";
+  if (bytes < 1024) return bytes + "B";
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(0) + "KB";
+  return (bytes / (1024 * 1024)).toFixed(1) + "MB";
+}
+
+function $(id) { return document.getElementById(id); }
+
+// ─── Toast notifications ───────────────────────────────────
+function showToast(message, type = "info", duration = 4000) {
+  const container = $("toast-container") || createToastContainer();
+  const toast = document.createElement("div");
+  toast.className = `toast toast-${type}`;
+  toast.textContent = message;
+  container.appendChild(toast);
+  requestAnimationFrame(() => toast.classList.add("show"));
+  setTimeout(() => {
+    toast.classList.remove("show");
+    setTimeout(() => toast.remove(), 300);
+  }, duration);
+}
+
+function createToastContainer() {
+  const c = document.createElement("div");
+  c.id = "toast-container";
+  c.style.cssText = "position:fixed;top:16px;right:16px;z-index:999;display:flex;flex-direction:column;gap:8px;";
+  document.body.appendChild(c);
+  return c;
+}
+
+// ─── Init ──────────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", async () => {
-  // Check if user exists in localStorage
+  // 1. Health check
+  try {
+    const res = await fetch(`${API}/health`);
+    const data = await res.json();
+    if (data.status !== "ok") throw new Error("unhealthy");
+  } catch (e) {
+    showToast("Server unreachable — check if MADE is running", "error", 10000);
+    return;
+  }
+
+  // 2. Onboarding check
   const stored = localStorage.getItem("made-user");
   if (stored) {
-    currentUser = JSON.parse(stored);
-  } else {
-    document.getElementById("onboard-overlay").style.display = "flex";
+    try { currentUser = JSON.parse(stored); } catch { currentUser = null; }
+  }
+
+  if (!currentUser) {
+    $("onboard-overlay").style.display = "flex";
+    $("user-name").focus();
     return;
   }
 
   await init();
 });
 
-async function completeOnboarding() {
-  const name = document.getElementById("user-name").value.trim();
-  if (!name) { document.getElementById("user-name").style.borderColor = "#ef4444"; return; }
+// ─── FEATURE 1: Onboarding Flow ────────────────────────────
+function completeOnboarding() {
+  const input = $("user-name");
+  const name = input.value.trim();
+
+  if (!name) {
+    input.style.borderColor = "var(--red)";
+    input.focus();
+    return;
+  }
 
   currentUser = { name, joinedAt: new Date().toISOString() };
   localStorage.setItem("made-user", JSON.stringify(currentUser));
-  document.getElementById("onboard-overlay").style.display = "none";
-  await init();
+  $("onboard-overlay").style.display = "none";
+  showToast(`Welcome, ${name}!`, "success");
+  init();
 }
 
+function showNameChangeModal() {
+  const newName = prompt("Change your name:", currentUser?.name || "");
+  if (newName && newName.trim()) {
+    currentUser.name = newName.trim();
+    localStorage.setItem("made-user", JSON.stringify(currentUser));
+    updateSidebarUser();
+    showToast(`Name updated to ${newName.trim()}`, "success");
+  }
+}
+
+function updateSidebarUser() {
+  const el = $("sidebar-username");
+  if (el && currentUser) el.textContent = currentUser.name;
+}
+
+// ─── Core Init ─────────────────────────────────────────────
 async function init() {
   // Load agents
   try {
     const res = await fetch(`${API}/api/agents`);
     agents = await res.json();
-  } catch (e) { console.error("Failed to load agents:", e); }
+  } catch (e) {
+    console.error("Failed to load agents:", e);
+    showToast("Failed to load agents", "error");
+  }
 
-  // Load sessions
+  updateSidebarUser();
   await loadSessions();
 
   // Restore last session
-  const lastSession = localStorage.getItem("made-last-session");
-  if (lastSession) {
-    const sessions = await (await fetch(`${API}/api/sessions`)).json();
-    const found = sessions.find(s => s.id === lastSession);
-    if (found) selectSession(found.id);
+  const lastId = localStorage.getItem("made-last-session");
+  if (lastId) {
+    try {
+      const res = await fetch(`${API}/api/sessions`);
+      const sessions = await res.json();
+      const found = sessions.find(s => s.id === lastId);
+      if (found) selectSession(found.id);
+    } catch {}
   }
 }
 
-// ─── Sessions ──────────────────────────────────────────
+// ─── FEATURE 2: Session List ───────────────────────────────
 async function loadSessions() {
   try {
     const res = await fetch(`${API}/api/sessions`);
     const sessions = await res.json();
-    const list = document.getElementById("session-list");
-    const emptyState = document.getElementById("empty-state");
+    const list = $("session-list");
+    const sidebarEmpty = $("sidebar-empty");
+
     list.innerHTML = "";
 
-    // Show/hide sidebar empty state
     if (sessions.length > 0) {
-      emptyState.style.display = "none";
+      if (sidebarEmpty) sidebarEmpty.style.display = "none";
     } else {
-      emptyState.style.display = "";
+      if (sidebarEmpty) sidebarEmpty.style.display = "";
     }
 
     sessions.forEach(s => {
       const div = document.createElement("div");
-      div.className = `session-item ${currentSession?.id === s.id ? "active" : ""}`;
-      div.innerHTML = `<span class="session-name">${escapeHtml(s.name)}</span>
-        <span class="session-meta">${escapeHtml(s.agentId)} · ${new Date(s.createdAt).toLocaleDateString()}</span>`;
-      div.addEventListener("click", () => selectSession(s.id));
+      div.className = `session-item${currentSession?.id === s.id ? " active" : ""}`;
+      div.innerHTML = `
+        <span class="session-name">${escapeHtml(s.name)}</span>
+        <span class="session-meta">${escapeHtml(s.agentId)} · ${new Date(s.createdAt).toLocaleDateString()}</span>
+        <button class="session-delete" title="Delete session">&times;</button>
+      `;
+      div.addEventListener("click", (e) => {
+        if (e.target.classList.contains("session-delete")) return;
+        selectSession(s.id);
+      });
+      // Delete button
+      const delBtn = div.querySelector(".session-delete");
+      delBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        deleteSession(s.id, s.name);
+      });
       list.appendChild(div);
     });
   } catch (e) {
@@ -83,6 +183,7 @@ async function loadSessions() {
   }
 }
 
+// ─── FEATURE 3: Session Select ─────────────────────────────
 async function selectSession(id) {
   try {
     const res = await fetch(`${API}/api/sessions/${id}`);
@@ -90,39 +191,59 @@ async function selectSession(id) {
     localStorage.setItem("made-last-session", id);
   } catch { return; }
 
-  // Show session view, hide the no-session placeholder
-  document.getElementById("empty-state").style.display = "none";
-  document.getElementById("no-session").style.display = "none";
-  document.getElementById("session-view").style.display = "flex";
-  document.getElementById("session-name").textContent = currentSession.name;
-  document.getElementById("session-agent").textContent = currentSession.agentId;
+  // Show session view
+  $("no-session").style.display = "none";
+  $("session-view").style.display = "flex";
+  $("session-name").textContent = currentSession.name;
+  $("session-agent").textContent = currentSession.agentId;
 
-  // Load agent selector
-  const select = document.getElementById("agent-select");
+  // Agent selector
+  const select = $("agent-select");
   select.innerHTML = agents.map(a =>
-    `<option value="${a.id}" ${!a.available ? 'disabled' : ''} ${a.id === currentSession.agentId ? 'selected' : ''}>${escapeHtml(a.name)} ${a.available ? '✓' : '(not installed)'}</option>`
+    `<option value="${a.id}" ${!a.available ? "disabled" : ""} ${a.id === currentSession.agentId ? "selected" : ""}>${escapeHtml(a.name)} ${a.available ? "✓" : "(not installed)"}</option>`
   ).join("");
+
+  // Reset file path
+  currentFilePath = "";
 
   // Connect WebSocket
   connectWS(id);
 
-  // Load messages
+  // Load data
   await loadMessages(id);
-
-  // Load files
   await loadFiles(id, "");
-
-  // Load git status
   await loadGitStatus(id);
 
-  // Hide diff panel on session switch
-  document.getElementById("diff-panel").style.display = "none";
+  // Hide diff panel
+  $("diff-panel").style.display = "none";
 
-  // Refresh session list (highlight active)
+  // Refresh sidebar highlight
   await loadSessions();
 }
 
-// ─── WebSocket ──────────────────────────────────────────
+// ─── FEATURE 4: Session Delete ─────────────────────────────
+async function deleteSession(id, name) {
+  if (!confirm(`Delete session "${name}"?\nThis cannot be undone.`)) return;
+
+  try {
+    await fetch(`${API}/api/sessions/${id}`, { method: "DELETE" });
+
+    if (currentSession?.id === id) {
+      currentSession = null;
+      $("session-view").style.display = "none";
+      $("no-session").style.display = "";
+      if (ws) ws.close();
+    }
+
+    localStorage.removeItem("made-last-session");
+    await loadSessions();
+    showToast(`Session "${name}" deleted`, "success");
+  } catch (e) {
+    showToast(`Failed to delete: ${e.message}`, "error");
+  }
+}
+
+// ─── FEATURE 5: WebSocket ──────────────────────────────────
 function connectWS(sessionId) {
   if (ws) ws.close();
 
@@ -130,11 +251,11 @@ function connectWS(sessionId) {
   ws = new WebSocket(`${proto}//${location.host}/ws?sessionId=${sessionId}`);
 
   ws.onopen = () => {
-    console.log(`WS connected to session ${sessionId}`);
+    setConnectionStatus("connected");
   };
 
-  ws.onerror = (err) => {
-    console.error("WS error:", err);
+  ws.onerror = () => {
+    setConnectionStatus("error");
   };
 
   ws.onmessage = (event) => {
@@ -143,31 +264,42 @@ function connectWS(sessionId) {
       appendMessage(msg);
       setAgentStatus("working");
       currentStreamOutput = "";
+      lastStreamDiv = null;
     } else if (msg.type === "agent_stream") {
       appendStream(msg);
       currentStreamOutput += msg.content || "";
     } else if (msg.type === "agent_done") {
       handleAgentDone(msg, sessionId);
     } else if (msg.type === "chat_message") {
-      // Other user's chat message via WebSocket
       if (msg.userId !== currentUser?.name) appendMessage(msg);
     } else if (msg.type === "connected") {
-      console.log("WS connected to session", sessionId);
+      setConnectionStatus("connected");
     }
   };
 
   ws.onclose = () => {
-    console.log("WS disconnected");
-    // Reconnect after 3s
-    setTimeout(() => { if (currentSession?.id === sessionId) connectWS(sessionId); }, 3000);
+    setConnectionStatus("disconnected");
+    setTimeout(() => {
+      if (currentSession?.id === sessionId) connectWS(sessionId);
+    }, 3000);
   };
 }
 
-// ─── FEATURE 1: Command Output Card on agent_done ──────
+function setConnectionStatus(status) {
+  const el = $("connection-status");
+  if (!el) return;
+  el.className = `conn-${status}`;
+  el.textContent = status === "connected" ? "● Live" :
+                   status === "disconnected" ? "○ Reconnecting..." :
+                   "● Error";
+}
+
+// ─── FEATURE 6: Agent Run / Abort ─────────────────────────
 function handleAgentDone(msg, sessionId) {
   setAgentStatus("idle");
-  document.getElementById("btn-stop").style.display = "none";
-  document.getElementById("btn-agent").style.display = "";
+  $("btn-stop").style.display = "none";
+  $("btn-agent").style.display = "";
+  lastStreamDiv = null;
 
   const exitCode = msg.metadata?.exitCode ?? 0;
   const output = currentStreamOutput || msg.content || "";
@@ -175,13 +307,64 @@ function handleAgentDone(msg, sessionId) {
 
   appendCommandCard(exitCode, output);
 
-  // FEATURE 2: auto-refresh git status and files after agent run
+  // Auto-refresh after agent completes
   loadGitStatus(sessionId);
-  loadFiles(sessionId, "");
+  loadFiles(sessionId, currentFilePath);
 }
 
+async function runAgent() {
+  if (!currentSession) return;
+
+  const input = $("agent-input");
+  const prompt = input.value.trim();
+  if (!prompt) return;
+
+  const agentId = $("agent-select").value;
+  input.value = "";
+
+  appendMessage({ type: "user", userId: currentUser.name, content: `→ ${agentId}: ${prompt}` });
+
+  lastStreamDiv = null;
+  currentStreamOutput = "";
+  $("btn-agent").style.display = "none";
+  $("btn-stop").style.display = "";
+  setAgentStatus("working");
+
+  try {
+    await fetch(`${API}/api/sessions/${currentSession.id}/agent`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt, userId: currentUser.name, agentId }),
+    });
+  } catch (e) {
+    appendMessage({ type: "error", userId: "system", content: `Agent failed: ${e.message}` });
+    $("btn-agent").style.display = "";
+    $("btn-stop").style.display = "none";
+    setAgentStatus("error");
+  }
+}
+
+async function abortAgent() {
+  if (!currentSession) return;
+  try {
+    await fetch(`${API}/api/sessions/${currentSession.id}/exec/abort`, { method: "POST" });
+  } catch {}
+  $("btn-stop").style.display = "none";
+  $("btn-agent").style.display = "";
+  setAgentStatus("idle");
+  showToast("Agent stopped", "info");
+}
+
+function setAgentStatus(status) {
+  const el = $("agent-status");
+  el.className = `status-${status}`;
+  el.textContent = status === "working" ? "Agent working..." :
+                   status === "error" ? "Agent error" : "Agent idle";
+}
+
+// ─── FEATURE 7: Command Output Cards ──────────────────────
 function appendCommandCard(exitCode, output) {
-  const container = document.getElementById("messages");
+  const container = $("messages");
   const lines = output.split("\n");
   const isLong = lines.length > 10;
   const success = exitCode === 0;
@@ -210,7 +393,7 @@ function appendCommandCard(exitCode, output) {
   if (isLong) body.classList.add("collapsed");
   body.textContent = output;
 
-  // Toggle handler
+  // Toggle
   header.addEventListener("click", () => {
     const collapsed = body.classList.toggle("collapsed");
     toggleBtn.textContent = collapsed ? "▶ Show output" : "▼ Hide output";
@@ -222,201 +405,262 @@ function appendCommandCard(exitCode, output) {
   container.scrollTop = container.scrollHeight;
 }
 
-// ─── Messages ───────────────────────────────────────────
+// ─── FEATURE 8: Chat Messages with Timestamps ─────────────
 async function loadMessages(sessionId) {
   try {
     const res = await fetch(`${API}/api/sessions/${sessionId}/messages`);
     const data = await res.json();
-    const container = document.getElementById("messages");
+    const container = $("messages");
     container.innerHTML = "";
-    (data.messages || data).forEach(msg => appendMessage(msg));
+
+    const messages = Array.isArray(data) ? data : (data.messages || []);
+    if (messages.length === 0) {
+      container.innerHTML = '<div class="msg-empty">No messages yet. Say something or run an agent.</div>';
+      return;
+    }
+
+    messages.forEach(msg => appendMessage(msg));
     container.scrollTop = container.scrollHeight;
   } catch {}
 }
 
 function appendMessage(msg) {
-  const container = document.getElementById("messages");
+  const container = $("messages");
+  // Remove empty state if present
+  const emptyEl = container.querySelector(".msg-empty");
+  if (emptyEl) emptyEl.remove();
+
   const div = document.createElement("div");
-  const typeClass = msg.type === "user" ? "msg-user" : msg.type === "agent_stream" ? "msg-agent msg-stream" : msg.type === "agent_done" ? "msg-agent" : msg.type === "error" ? "msg-error" : "msg-system";
-  const label = msg.userId === currentUser?.name ? currentUser.name : msg.userId;
+
+  const typeClass =
+    msg.type === "user" ? "msg-user" :
+    msg.type === "agent_stream" ? "msg-agent msg-stream" :
+    msg.type === "agent_done" ? "msg-agent" :
+    msg.type === "agent_start" ? "msg-agent" :
+    msg.type === "error" ? "msg-error" : "msg-system";
+
+  const label = msg.userId === currentUser?.name ? currentUser.name : (msg.userId || "system");
+  const time = formatTime(msg.timestamp || msg.ts);
 
   div.className = `msg ${typeClass}`;
-  div.innerHTML = `<div class="msg-label">${escapeHtml(label)}</div><div class="msg-content">${escapeHtml(msg.content)}</div>`;
+  div.innerHTML =
+    `<div class="msg-header">` +
+      `<span class="msg-label">${escapeHtml(label)}</span>` +
+      `<span class="msg-time">${time}</span>` +
+    `</div>` +
+    `<div class="msg-content">${escapeHtml(msg.content)}</div>`;
+
   container.appendChild(div);
   container.scrollTop = container.scrollHeight;
 }
 
-let lastStreamDiv = null;
 function appendStream(msg) {
   if (lastStreamDiv && msg.type === "agent_stream") {
-    lastStreamDiv.querySelector(".msg-content").textContent += msg.content;
+    lastStreamDiv.querySelector(".msg-content").textContent += msg.content || "";
+    const container = $("messages");
+    container.scrollTop = container.scrollHeight;
   } else {
-    const container = document.getElementById("messages");
+    const container = $("messages");
     const div = document.createElement("div");
     div.className = "msg msg-agent msg-stream";
-    div.innerHTML = `<div class="msg-label">agent</div><div class="msg-content">${escapeHtml(msg.content)}</div>`;
+    div.innerHTML =
+      `<div class="msg-header">` +
+        `<span class="msg-label">agent</span>` +
+        `<span class="msg-time">${formatTime(new Date().toISOString())}</span>` +
+      `</div>` +
+      `<div class="msg-content">${escapeHtml(msg.content)}</div>`;
     container.appendChild(div);
     lastStreamDiv = div;
     container.scrollTop = container.scrollHeight;
   }
 }
 
-function escapeHtml(text) {
-  const el = document.createElement("span");
-  el.textContent = text;
-  return el.innerHTML;
-}
-
-// ─── Chat Message (no agent) ────────────────────────────
 async function sendChat() {
   if (!currentSession) return;
 
-  const input = document.getElementById("chat-input");
+  const input = $("chat-input");
   const text = input.value.trim();
   if (!text) return;
   input.value = "";
 
-  // Show user message in chat immediately
-  appendMessage({ type: "user", userId: currentUser.name, content: text });
+  const msg = {
+    type: "user",
+    userId: currentUser.name,
+    content: text,
+    timestamp: new Date().toISOString(),
+  };
 
-  // Save to server as chat message (not agent prompt)
+  appendMessage(msg);
+
   try {
     await fetch(`${API}/api/sessions/${currentSession.id}/messages`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type: "user", userId: currentUser.name, content: text }),
+      body: JSON.stringify(msg),
     });
   } catch {}
 }
 
-// ─── Agent Prompt ───────────────────────────────────────
-async function runAgent() {
-  if (!currentSession) return;
-
-  const input = document.getElementById("agent-input");
-  const prompt = input.value.trim();
-  if (!prompt) return;
-
-  const agentId = document.getElementById("agent-select").value;
-  input.value = "";
-
-  // Show the agent prompt in chat so everyone sees what was requested
-  appendMessage({ type: "user", userId: currentUser.name, content: `→ ${agentId}: ${prompt}` });
-
-  lastStreamDiv = null;
-  document.getElementById("btn-agent").style.display = "none";
-  document.getElementById("btn-stop").style.display = "";
-  setAgentStatus("working");
-
-  try {
-    await fetch(`${API}/api/sessions/${currentSession.id}/agent`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt, userId: currentUser.name, agentId }),
-    });
-  } catch (e) {
-    appendMessage({ type: "error", userId: "system", content: `Agent failed: ${e.message}` });
-    document.getElementById("btn-agent").style.display = "";
-    document.getElementById("btn-stop").style.display = "none";
-    setAgentStatus("error");
-  }
-}
-
-async function abortAgent() {
-  if (!currentSession) return;
-  await fetch(`${API}/api/sessions/${currentSession.id}/exec/abort`, { method: "POST" });
-  document.getElementById("btn-stop").style.display = "none";
-  document.getElementById("btn-agent").style.display = "";
-  setAgentStatus("idle");
-}
-
-// ─── Files ──────────────────────────────────────────────
+// ─── FEATURE 9: File Browser with Breadcrumb ──────────────
 async function loadFiles(sessionId, path) {
-  const tree = document.getElementById("file-tree");
+  currentFilePath = path;
+  const tree = $("file-tree");
+
   try {
     const res = await fetch(`${API}/api/sessions/${sessionId}/files?path=${encodeURIComponent(path)}`);
     const entries = await res.json();
 
-    // Server returned an error object instead of array
     if (!Array.isArray(entries)) {
-      const errMsg = entries?.error?.message || "Unable to load files (invalid work directory)";
+      const errMsg = entries?.error?.message || "Unable to load files";
       tree.innerHTML = `<div class="file-error">⚠ ${escapeHtml(errMsg)}</div>`;
+      updateBreadcrumb(path);
       return;
     }
 
     tree.innerHTML = "";
+    updateBreadcrumb(path);
 
-    // Show empty message if directory has no visible entries
+    // "Go up" entry if we're in a subdirectory
+    if (path) {
+      const up = document.createElement("div");
+      up.className = "file-entry dir";
+      up.textContent = "📁 ..";
+      up.addEventListener("click", () => {
+        const parent = path.split("/").slice(0, -1).join("/");
+        loadFiles(sessionId, parent);
+      });
+      tree.appendChild(up);
+    }
+
     const visible = entries.filter(e => !e.name.startsWith(".") && e.name !== "node_modules");
-    if (visible.length === 0) {
+    if (visible.length === 0 && !path) {
       tree.innerHTML = '<div class="file-empty">Empty directory</div>';
       return;
     }
 
     visible.forEach(e => {
+      const fullPath = path ? `${path}/${e.name}` : e.name;
+      const isChanged = changedFileList.some(cf => cf.path === fullPath || cf.path === `/${fullPath}`);
       const div = document.createElement("div");
-      const isChanged = changedFileList.some(cf => cf.path === `${path}/${e.name}`.replace(/^\//, ""));
       div.className = `file-entry ${e.type === "dir" ? "dir" : ""} ${isChanged ? "changed" : ""}`;
-      div.textContent = `${e.type === "dir" ? "📁" : "📄"} ${e.name} ${e.size ? `(${formatSize(e.size)})` : ""}`;
-      div.addEventListener("click", () => fileClick(sessionId, `${path}/${e.name}`, e.type === "dir"));
+
+      const icon = e.type === "dir" ? "📁" : getFileIcon(e.name);
+      const size = e.size ? ` (${formatSize(e.size)})` : "";
+      div.textContent = `${icon} ${e.name}${size}`;
+
+      div.addEventListener("click", () => fileClick(sessionId, fullPath, e.type === "dir"));
       tree.appendChild(div);
     });
   } catch (e) {
-    tree.innerHTML = `<div class="file-error">⚠ Failed to load files: ${escapeHtml(e.message)}</div>`;
+    tree.innerHTML = `<div class="file-error">⚠ ${escapeHtml(e.message)}</div>`;
   }
+}
+
+function updateBreadcrumb(path) {
+  const bc = $("file-breadcrumb");
+  if (!bc) return;
+
+  if (!path) {
+    bc.innerHTML = '<span class="bc-root">root</span>';
+    return;
+  }
+
+  let html = '<span class="bc-root" data-path="">root</span>';
+  const parts = path.split("/");
+  parts.forEach((part, i) => {
+    const crumbPath = parts.slice(0, i + 1).join("/");
+    html += ` <span class="bc-sep">/</span> <span class="bc-part" data-path="${escapeHtml(crumbPath)}">${escapeHtml(part)}</span>`;
+  });
+  bc.innerHTML = html;
+
+  // Wire breadcrumb clicks
+  bc.querySelectorAll("[data-path]").forEach(el => {
+    el.addEventListener("click", () => {
+      if (currentSession) loadFiles(currentSession.id, el.dataset.path);
+    });
+  });
+}
+
+function getFileIcon(name) {
+  const ext = name.split(".").pop().toLowerCase();
+  const icons = {
+    js: "📜", mjs: "📜", ts: "📜", jsx: "⚛️", tsx: "⚛️",
+    py: "🐍", rb: "💎", go: "🔵", rs: "🦀", java: "☕",
+    html: "🌐", css: "🎨", scss: "🎨", json: "📋", yaml: "📋", yml: "📋", toml: "📋",
+    md: "📝", txt: "📄", sh: "🔧", bash: "🔧",
+    png: "🖼️", jpg: "🖼️", gif: "🖼️", svg: "🖼️",
+    lock: "🔒", env: "🔐",
+  };
+  return icons[ext] || "📄";
 }
 
 function fileClick(sessionId, path, isDir) {
   if (isDir) {
     loadFiles(sessionId, path);
   } else {
-    // Read file content — show in a simple view
     fetch(`${API}/api/sessions/${sessionId}/file?path=${encodeURIComponent(path)}`)
       .then(r => r.json())
       .then(data => {
-        if (data.error) return;
-        // For MVP, just show content in a message
-        appendMessage({ type: "system", userId: "system", content: `📄 ${path}\n${data.content?.slice(0, 500)}${(data.content?.length || 0) > 500 ? '\n... (truncated)' : ''}` });
-      });
+        if (data.error) {
+          showToast(data.error.message, "error");
+          return;
+        }
+        const content = data.content || "";
+        // Check for binary-like content
+        if (isBinaryContent(content, path)) {
+          appendMessage({ type: "system", userId: "system", content: `📄 ${path}\n(Binary file — ${formatSize(data.size)})` });
+        } else {
+          const truncated = content.length > 2000;
+          const display = truncated ? content.slice(0, 2000) + "\n... (truncated)" : content;
+          appendMessage({ type: "system", userId: "system", content: `📄 ${path}\n${display}` });
+        }
+      })
+      .catch(e => showToast(`Failed to read file: ${e.message}`, "error"));
   }
 }
 
-function formatSize(bytes) {
-  if (bytes < 1024) return bytes + "B";
-  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(0) + "KB";
-  return (bytes / (1024 * 1024)).toFixed(1) + "MB";
+function isBinaryContent(content, filename) {
+  // Check by extension first
+  const binaryExts = ["png", "jpg", "jpeg", "gif", "webp", "ico", "woff", "woff2", "ttf", "eot", "zip", "gz", "tar", "mp3", "mp4", "wav", "avi", "mov", "pdf"];
+  const ext = filename.split(".").pop().toLowerCase();
+  if (binaryExts.includes(ext)) return true;
+
+  // Check for null bytes in first 8KB
+  const sample = content.slice(0, 8192);
+  for (let i = 0; i < sample.length; i++) {
+    if (sample.charCodeAt(i) === 0) return true;
+  }
+  return false;
 }
 
-// ─── Git ────────────────────────────────────────────────
+// ─── FEATURE 10: Git Status + Diff + Commit ───────────────
+let changedFileList = [];
+
 async function loadGitStatus(sessionId) {
   try {
     const res = await fetch(`${API}/api/sessions/${sessionId}/git/status`);
     const data = await res.json();
+
     if (data.error) {
-      document.getElementById("git-branch").textContent = "Git unavailable";
-      document.getElementById("git-status").textContent = data.error.message || "Git error";
+      $("git-branch").textContent = "Git unavailable";
+      $("git-status").textContent = data.error.message || "Git error";
       changedFileList = [];
       renderChangedFiles(changedFileList);
       return;
     }
 
-    // Update branch info
     if (data.branch) {
-      document.getElementById("git-branch").textContent = `${data.branch} (${data.modified} changed)`;
+      $("git-branch").textContent = `${data.branch} (${data.modified} changed)`;
     }
 
-    // FEATURE 2: Parse changed files and display in "Changes" section
     changedFileList = parseGitStatus(data.raw || "");
     renderChangedFiles(changedFileList);
 
-    // Also update status text area
-    const statusEl = document.getElementById("git-status");
-    if (data.lastCommit) {
-      statusEl.textContent = data.lastCommit;
-    }
+    const statusEl = $("git-status");
+    statusEl.textContent = data.lastCommit || "";
   } catch (e) {
-    document.getElementById("git-branch").textContent = "Git unavailable";
-    document.getElementById("git-status").textContent = e.message || "Failed to load git status";
+    $("git-branch").textContent = "Git unavailable";
+    $("git-status").textContent = e.message || "Failed to load git status";
     changedFileList = [];
     renderChangedFiles(changedFileList);
   }
@@ -428,16 +672,16 @@ function parseGitStatus(raw) {
     const statusCode = line.slice(0, 2);
     const filePath = line.slice(3).trim();
     let changeType = "modified";
-    if (statusCode.includes("A") || statusCode.includes("??")) changeType = "added";
+    if (statusCode.includes("A")) changeType = "added";
     else if (statusCode.includes("D")) changeType = "deleted";
     else if (statusCode.includes("M")) changeType = "modified";
-    else if (statusCode.trim() === "??" ) changeType = "untracked";
+    else if (statusCode.trim() === "??") changeType = "untracked";
     return { path: filePath, status: statusCode.trim(), changeType };
   });
 }
 
 function renderChangedFiles(files) {
-  const container = document.getElementById("changed-files");
+  const container = $("changed-files");
   if (!files.length) {
     container.innerHTML = '<div class="no-changes">No changes detected</div>';
     return;
@@ -446,7 +690,6 @@ function renderChangedFiles(files) {
   files.forEach(f => {
     const entry = document.createElement("div");
     entry.className = "changed-file-entry";
-    entry.dataset.filepath = f.path;
 
     const badge = document.createElement("span");
     badge.className = `change-badge ${f.changeType}`;
@@ -457,34 +700,32 @@ function renderChangedFiles(files) {
 
     entry.appendChild(badge);
     entry.appendChild(name);
-
-    // FEATURE 3: Click to show diff for this file
     entry.addEventListener("click", () => showDiff(f.path));
-
     container.appendChild(entry);
   });
 }
 
-// ─── FEATURE 3: Diff Viewer ────────────────────────────
+// ─── FEATURE 11: Diff Viewer ──────────────────────────────
 async function showDiff(filePath) {
   if (!currentSession) return;
-  const panel = document.getElementById("diff-panel");
-  const content = document.getElementById("diff-content");
+  const panel = $("diff-panel");
+  const content = $("diff-content");
+  const diffTitle = $("diff-title");
 
   panel.style.display = "block";
+  if (diffTitle) diffTitle.textContent = `Diff: ${filePath}`;
   content.innerHTML = "Loading diff...";
 
   try {
     const res = await fetch(`${API}/api/sessions/${currentSession.id}/git/diff`);
     const data = await res.json();
+
     if (data.error) {
       content.innerHTML = `<div class="diff-line" style="color:var(--red)">Error: ${escapeHtml(data.error.message || "Failed to load diff")}</div>`;
       return;
     }
 
-    const fullDiff = data.diff || "";
-    // Filter diff to show sections related to clicked file
-    const filtered = filterDiffForFile(fullDiff, filePath);
+    const filtered = filterDiffForFile(data.diff || "", filePath);
     content.innerHTML = "";
 
     if (!filtered.trim()) {
@@ -511,38 +752,27 @@ async function showDiff(filePath) {
       content.appendChild(document.createTextNode("\n"));
     });
   } catch (e) {
-    content.innerHTML = `<div class="diff-line" style="color:var(--red)">Error loading diff: ${escapeHtml(e.message)}</div>`;
+    content.innerHTML = `<div class="diff-line" style="color:var(--red)">Error: ${escapeHtml(e.message)}</div>`;
   }
 }
 
 function filterDiffForFile(diff, filePath) {
-  // Parse unified diff: find sections starting with --- a/file or +++ b/file
   const lines = diff.split("\n");
   const result = [];
   let inFile = false;
   const basename = filePath.split("/").pop();
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    // Check for file header lines
+  for (const line of lines) {
     if (line.startsWith("diff --git")) {
-      // Check if this diff section is for our file
-      if (line.includes(filePath) || line.includes(basename)) {
-        inFile = true;
-      } else {
-        inFile = false;
-      }
+      inFile = line.includes(filePath) || line.includes(basename);
     }
-    if (inFile) {
-      result.push(line);
-    }
+    if (inFile) result.push(line);
   }
 
-  // If no exact match, return the full diff (for untracked files etc.)
   return result.length > 0 ? result.join("\n") : diff;
 }
 
-// ─── FEATURE 4: Approve/Reject Changes UI ──────────────
+// ─── Commit / Discard ─────────────────────────────────────
 async function commitChanges() {
   if (!currentSession) return;
 
@@ -560,62 +790,78 @@ async function commitChanges() {
     const data = await res.json();
     if (data.ok) {
       appendMessage({ type: "system", userId: "system", content: `Committed: ${data.sha}` });
+      showToast(`Committed ${data.sha}`, "success");
       loadGitStatus(currentSession.id);
-      loadFiles(currentSession.id, "");
-      document.getElementById("diff-panel").style.display = "none";
+      loadFiles(currentSession.id, currentFilePath);
+      $("diff-panel").style.display = "none";
     } else {
-      appendMessage({ type: "error", userId: "system", content: `Commit failed: ${data.error?.message || "Unknown error"}` });
+      showToast(`Commit failed: ${data.error?.message || "Unknown error"}`, "error");
     }
   } catch (e) {
-    appendMessage({ type: "error", userId: "system", content: `Commit failed: ${e.message}` });
+    showToast(`Commit failed: ${e.message}`, "error");
   }
 }
 
 async function discardChanges() {
   if (!currentSession) return;
 
-  if (!confirm("Are you sure you want to discard all uncommitted changes?\nThis cannot be undone.")) return;
+  if (!confirm("Discard ALL uncommitted changes?\nThis cannot be undone.")) return;
 
   try {
-    const res = await fetch(`${API}/api/sessions/${currentSession.id}/git/discard`, {
-      method: "POST",
-    });
+    const res = await fetch(`${API}/api/sessions/${currentSession.id}/git/discard`, { method: "POST" });
     const data = await res.json();
     if (data.ok) {
       appendMessage({ type: "system", userId: "system", content: "Changes discarded." });
+      showToast("Changes discarded", "info");
       loadGitStatus(currentSession.id);
-      loadFiles(currentSession.id, "");
-      document.getElementById("diff-panel").style.display = "none";
+      loadFiles(currentSession.id, currentFilePath);
+      $("diff-panel").style.display = "none";
     } else {
-      appendMessage({ type: "error", userId: "system", content: `Discard failed: ${data.error?.message || "Unknown error"}` });
+      showToast(`Discard failed: ${data.error?.message || "Unknown error"}`, "error");
     }
   } catch (e) {
-    appendMessage({ type: "error", userId: "system", content: `Discard failed: ${e.message}` });
+    showToast(`Discard failed: ${e.message}`, "error");
   }
 }
 
-// ─── New Session Modal ──────────────────────────────────
+// ─── FEATURE 12: New Session Modal ────────────────────────
 function showNewSessionModal() {
-  document.getElementById("modal-overlay").style.display = "flex";
+  const overlay = $("modal-overlay");
+  overlay.style.display = "flex";
+
+  // Reset all fields
+  $("new-name").value = "";
+  $("new-workdir").value = "";
+  $("new-clone-url").value = "";
+  $("new-workdir").style.display = "none";
+  $("new-clone-url").style.display = "none";
+  selectedAgent = null;
+
+  // Reset radio to "fresh"
+  const freshRadio = document.querySelector('input[name="proj-type"][value="fresh"]');
+  if (freshRadio) freshRadio.checked = true;
 
   // Populate agent picker
-  const picker = document.getElementById("agent-picker");
+  const picker = $("agent-picker");
   picker.innerHTML = "";
   agents.forEach(a => {
     const div = document.createElement("div");
-    div.className = `agent-option ${a.available ? 'available' : 'unavailable'}`;
+    div.className = `agent-option ${a.available ? "available" : "unavailable"}`;
     div.dataset.agent = a.id;
-    div.innerHTML = `<span class="dot ${a.available ? 'on' : 'off'}"></span>
-      <span>${escapeHtml(a.name)}</span>
-      <span style="color:var(--text2);font-size:10px">${escapeHtml(a.cliCommand || '')}</span>`;
+    div.innerHTML =
+      `<span class="dot ${a.available ? "on" : "off"}"></span>` +
+      `<span>${escapeHtml(a.name)}</span>` +
+      `<span style="color:var(--text2);font-size:10px">${escapeHtml(a.cliCommand || "")}</span>`;
     if (a.available) {
       div.addEventListener("click", () => selectAgent(a.id, div));
     }
     picker.appendChild(div);
   });
+
+  // Focus the name input
+  setTimeout(() => $("new-name").focus(), 50);
 }
 
-let selectedAgent = null;
 function selectAgent(id, el) {
   selectedAgent = id;
   document.querySelectorAll(".agent-option").forEach(opt => opt.style.borderColor = "var(--border)");
@@ -623,26 +869,33 @@ function selectAgent(id, el) {
 }
 
 function hideModal() {
-  document.getElementById("modal-overlay").style.display = "none";
+  $("modal-overlay").style.display = "none";
 }
 
 async function createSession() {
-  const name = document.getElementById("new-name").value.trim() || "Untitled";
-  const projectType = document.querySelector('input[name="proj-type"]:checked').value;
+  const name = $("new-name").value.trim() || "Untitled";
+  const projectType = document.querySelector('input[name="proj-type"]:checked')?.value || "fresh";
   const agentId = selectedAgent || agents.find(a => a.available)?.id || "generic";
 
   let workDir;
   if (projectType === "local") {
-    workDir = document.getElementById("new-workdir").value.trim();
-    if (!workDir) { document.getElementById("new-workdir").style.borderColor = "#ef4444"; return; }
+    workDir = $("new-workdir").value.trim();
+    if (!workDir) {
+      $("new-workdir").style.borderColor = "var(--red)";
+      $("new-workdir").focus();
+      return;
+    }
   } else if (projectType === "clone") {
-    const url = document.getElementById("new-clone-url").value.trim();
-    if (!url) { document.getElementById("new-clone-url").style.borderColor = "#ef4444"; return; }
-    // TODO: clone endpoint — for MVP, user clones manually and points to local
-    appendMessage({ type: "error", userId: "system", content: "Clone not yet implemented. Clone manually and use local path." });
+    const url = $("new-clone-url").value.trim();
+    if (!url) {
+      $("new-clone-url").style.borderColor = "var(--red)";
+      $("new-clone-url").focus();
+      return;
+    }
+    showToast("Clone not yet implemented. Clone manually and use local path.", "error", 6000);
     return;
   } else {
-    workDir = ""; // fresh = let server use its default
+    workDir = "";
   }
 
   try {
@@ -654,7 +907,7 @@ async function createSession() {
 
     if (!res.ok) {
       const err = await res.json();
-      alert(err.error?.message || "Failed to create session");
+      showToast(err.error?.message || "Failed to create session", "error");
       return;
     }
 
@@ -662,57 +915,77 @@ async function createSession() {
     hideModal();
     await loadSessions();
     await selectSession(session.id);
+    showToast(`Session "${name}" created`, "success");
   } catch (e) {
-    alert("Failed: " + e.message);
+    showToast(`Failed: ${e.message}`, "error");
   }
 }
 
-// ─── Status ─────────────────────────────────────────────
-function setAgentStatus(status) {
-  const el = document.getElementById("agent-status");
-  el.className = `status-${status}`;
-  el.textContent = status === "working" ? "Agent working..." : status === "error" ? "Agent error" : "Agent idle";
-}
-
-// ─── Keyboard + Buttons ────────────────────────────────
+// ─── Keyboard + Event Wiring ──────────────────────────────
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && document.activeElement === document.getElementById("chat-input")) {
+  // Enter on chat input → send
+  if (e.key === "Enter" && document.activeElement === $("chat-input")) {
     e.preventDefault();
     sendChat();
   }
-  if (e.key === "Enter" && document.activeElement === document.getElementById("agent-input")) {
+  // Enter on agent input → run
+  if (e.key === "Enter" && document.activeElement === $("agent-input")) {
     e.preventDefault();
     runAgent();
   }
+  // Enter on onboarding input → complete
+  if (e.key === "Enter" && document.activeElement === $("user-name")) {
+    e.preventDefault();
+    completeOnboarding();
+  }
+  // Enter on modal name → create
+  if (e.key === "Enter" && document.activeElement === $("new-name")) {
+    e.preventDefault();
+    createSession();
+  }
+  // Escape → close modal only (NOT onboarding)
   if (e.key === "Escape") {
-    hideModal();
-    document.getElementById("onboard-overlay").style.display = "none";
+    if ($("modal-overlay").style.display === "flex") {
+      hideModal();
+    }
+    if ($("diff-panel").style.display === "block") {
+      $("diff-panel").style.display = "none";
+    }
   }
 });
 
-// Wire buttons (module functions aren't global, so no onclick in HTML)
-document.getElementById("btn-send")?.addEventListener("click", sendChat);
-document.getElementById("btn-agent")?.addEventListener("click", runAgent);
-document.getElementById("btn-stop")?.addEventListener("click", abortAgent);
-document.getElementById("btn-new-session")?.addEventListener("click", showNewSessionModal);
+// Wire all buttons via data-action (ES modules — no onclick in HTML)
+document.addEventListener("DOMContentLoaded", () => {
+  // Primary action buttons
+  $("btn-send")?.addEventListener("click", sendChat);
+  $("btn-agent")?.addEventListener("click", runAgent);
+  $("btn-stop")?.addEventListener("click", abortAgent);
+  $("btn-new-session")?.addEventListener("click", showNewSessionModal);
 
-// Toggle project source fields in new session modal
-document.querySelectorAll('input[name="proj-type"]').forEach(r => {
-  r.addEventListener("change", () => {
-    document.getElementById("new-workdir").style.display = r.value === "local" ? "" : "none";
-    document.getElementById("new-clone-url").style.display = r.value === "clone" ? "" : "none";
+  // Data-action delegation
+  const actions = {
+    "onboard": completeOnboarding,
+    "new-session": showNewSessionModal,
+    "cancel": hideModal,
+    "create": createSession,
+    "commit": commitChanges,
+    "discard": discardChanges,
+    "close-diff": () => { $("diff-panel").style.display = "none"; },
+    "change-name": showNameChangeModal,
+  };
+
+  for (const [action, handler] of Object.entries(actions)) {
+    document.querySelectorAll(`[data-action="${action}"]`).forEach(el => {
+      el.addEventListener("click", handler);
+    });
+  }
+
+  // Project source radio toggle
+  document.querySelectorAll('input[name="proj-type"]').forEach(r => {
+    r.addEventListener("change", () => {
+      const val = r.value;
+      $("new-workdir").style.display = val === "local" ? "" : "none";
+      $("new-clone-url").style.display = val === "clone" ? "" : "none";
+    });
   });
-});
-document.querySelectorAll("[data-action='new-session']").forEach(el => el.addEventListener("click", showNewSessionModal));
-document.querySelectorAll("[data-action='cancel']").forEach(el => el.addEventListener("click", hideModal));
-document.querySelectorAll("[data-action='create']").forEach(el => el.addEventListener("click", createSession));
-document.querySelectorAll("[data-action='onboard']").forEach(el => el.addEventListener("click", completeOnboarding));
-document.querySelectorAll("[data-action='commit']").forEach(el => el.addEventListener("click", commitChanges));
-document.querySelectorAll("[data-action='discard']").forEach(el => el.addEventListener("click", discardChanges));
-document.querySelectorAll("[data-action='close-diff']").forEach(el => el.addEventListener("click", () => {
-  document.getElementById("diff-panel").style.display = "none";
-}));
-// Also support buttons that just have the right ID/text
-document.querySelectorAll("button").forEach(btn => {
-  if (btn.textContent.trim() === "Create your first session") btn.addEventListener("click", showNewSessionModal);
 });

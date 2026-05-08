@@ -8,6 +8,8 @@
 </head>
 <body>
 
+<!-- ─── Toast container (injected by JS if missing) ─── -->
+
 <!-- ─── Onboarding (first visit) ─── -->
 <div id="onboard-overlay" class="overlay" style="display:none">
   <div class="overlay-card">
@@ -29,8 +31,12 @@
       <h1>MADE</h1>
       <button id="btn-new-session" class="btn-icon" title="New Session">+</button>
     </div>
+    <div class="sidebar-user">
+      <span id="sidebar-username" class="sidebar-username">—</span>
+      <button data-action="change-name" class="btn-text" title="Change name">edit</button>
+    </div>
     <div id="session-list" class="session-list"></div>
-    <div id="empty-state" class="empty-state">
+    <div id="sidebar-empty" class="empty-state">
       <p>No sessions yet</p>
       <button data-action="new-session">Create your first session</button>
     </div>
@@ -51,7 +57,10 @@
           <span id="session-name" class="session-title"></span>
           <span id="session-agent" class="badge"></span>
         </div>
-        <div id="agent-status" class="status-idle">Agent idle</div>
+        <div class="session-header-right">
+          <span id="agent-status" class="status-idle">Agent idle</span>
+          <span id="connection-status" class="conn-connected">● Live</span>
+        </div>
       </div>
 
       <div class="session-body">
@@ -74,6 +83,7 @@
         <div class="right-panel">
           <div class="panel-section">
             <h3>Files</h3>
+            <div id="file-breadcrumb" class="file-breadcrumb"><span class="bc-root">root</span></div>
             <div id="file-tree" class="file-tree"></div>
           </div>
           <div class="panel-section">
@@ -91,7 +101,7 @@
           </div>
           <div id="diff-panel" class="panel-section diff-panel" style="display:none">
             <div class="diff-header">
-              <h3>Diff</h3>
+              <h3 id="diff-title">Diff</h3>
               <button data-action="close-diff" class="small">Close</button>
             </div>
             <div id="diff-content" class="diff-content"></div>
