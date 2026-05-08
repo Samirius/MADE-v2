@@ -2,7 +2,7 @@ import { createServer } from "node:http";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { join, resolve, relative, extname, basename } from "node:path";
 import { execSync, spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { WebSocketServer } from "ws";
 
 import { resolveAdapter, detectAll } from "./agent/registry.mjs";
