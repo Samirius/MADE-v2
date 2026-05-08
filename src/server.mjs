@@ -2,9 +2,8 @@ import { createServer } from "node:http";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { join, resolve, relative, extname, basename } from "node:path";
 import { execSync, spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { WebSocketServer } from "ws";
-import { randomBytes } from "node:crypto";
-import { createGzip } from "node:zlib";
 
 import { resolveAdapter, detectAll } from "./agent/registry.mjs";
 
@@ -391,16 +390,8 @@ function serveStatic(req, res) {
   // Cache static assets for 1 day, HTML no-cache
   const cacheControl = ext === ".html" ? "no-cache" : "public, max-age=86400";
 
-  // Gzip compression for text files
-  if ([".html", ".css", ".js", ".mjs", ".json", ".svg"].includes(ext)) {
-    res.writeHead(200, { "Content-Type": contentType, "Cache-Control": cacheControl, "Content-Encoding": "gzip" });
-    const gz = createGzip();
-    gz.end(content);
-    gz.pipe(res);
-  } else {
-    res.writeHead(200, { "Content-Type": contentType, "Cache-Control": cacheControl });
-    res.end(content);
-  }
+  res.writeHead(200, { "Content-Type": contentType, "Cache-Control": cacheControl });
+  res.end(content);
 }
 
 // ─── Main Server ─────────────────────────────────────────
