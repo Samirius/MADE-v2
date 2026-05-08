@@ -297,19 +297,16 @@ function showNewSessionModal() {
   // Populate agent picker
   const picker = document.getElementById("agent-picker");
   picker.innerHTML = agents.map(a => `
-    <div class="agent-option ${a.available ? 'available' : 'unavailable'}" onclick="${a.available ? `selectAgent('${a.id}')` : ''}">
+    <div class="agent-option ${a.available ? 'available' : 'unavailable'}" data-agent="${a.id}">
       <span class="dot ${a.available ? 'on' : 'off'}"></span>
       <span>${a.name}</span>
       <span style="color:var(--text2);font-size:10px">${a.cliCommand}</span>
     </div>
   `).join("");
 
-  // Show/hide clone URL
-  document.querySelectorAll('input[name="project-type"]').forEach(r => {
-    r.addEventListener("change", () => {
-      document.getElementById("new-workdir").style.display = r.value === "local" ? "" : "none";
-      document.getElementById("new-clone-url").style.display = r.value === "clone" ? "" : "none";
-    });
+  // Wire agent selection clicks
+  document.querySelectorAll('.agent-option.available').forEach(el => {
+    el.addEventListener('click', () => selectAgent(el.dataset.agent));
   });
 }
 
@@ -326,7 +323,7 @@ function hideModal() {
 
 async function createSession() {
   const name = document.getElementById("new-name").value.trim() || "Untitled";
-  const projectType = document.querySelector('input[name="project-type"]:checked').value;
+  const projectType = document.querySelector('input[name="proj-type"]:checked').value;
   const agentId = selectedAgent || agents.find(a => a.available)?.id || "generic";
 
   let workDir;
@@ -388,6 +385,14 @@ document.addEventListener("keydown", (e) => {
 document.getElementById("btn-send")?.addEventListener("click", sendPrompt);
 document.getElementById("btn-stop")?.addEventListener("click", abortAgent);
 document.getElementById("btn-new-session")?.addEventListener("click", showNewSessionModal);
+
+// Toggle project source fields in new session modal
+document.querySelectorAll('input[name="proj-type"]').forEach(r => {
+  r.addEventListener("change", () => {
+    document.getElementById("new-workdir").style.display = r.value === "local" ? "" : "none";
+    document.getElementById("new-clone-url").style.display = r.value === "clone" ? "" : "none";
+  });
+});
 document.querySelectorAll("[data-action='new-session']").forEach(el => el.addEventListener("click", showNewSessionModal));
 document.querySelectorAll("[data-action='cancel']").forEach(el => el.addEventListener("click", hideModal));
 document.querySelectorAll("[data-action='create']").forEach(el => el.addEventListener("click", createSession));

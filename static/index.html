@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MADE v2</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ─── Onboarding (first visit) ─── -->
+<div id="onboard-overlay" class="overlay" style="display:none">
+  <div class="overlay-card">
+    <h2>Welcome to MADE</h2>
+    <p>Your self-hosted, multi-agent coding workspace.</p>
+    <label>Your name
+      <input id="user-name" type="text" placeholder="Samir">
+    </label>
+    <button data-action="onboard" class="primary">Get Started</button>
+  </div>
+</div>
+
+<!-- ─── Layout ─── -->
+<div id="app" class="layout">
+
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <h1>MADE</h1>
+      <button id="btn-new-session" class="btn-icon" title="New Session">+</button>
+    </div>
+    <div id="session-list" class="session-list"></div>
+    <div id="empty-state" class="empty-state">
+      <p>No sessions yet</p>
+      <button data-action="new-session">Create your first session</button>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <main class="main">
+    <!-- No session selected -->
+    <div id="no-session" class="center-message">
+      <h2>Select or create a session</h2>
+    </div>
+
+    <!-- Session active -->
+    <div id="session-view" style="display:none" class="session-view">
+      <!-- Header -->
+      <div class="session-header">
+        <div>
+          <span id="session-name" class="session-title"></span>
+          <span id="session-agent" class="badge"></span>
+        </div>
+        <div id="agent-status" class="status-idle">Agent idle</div>
+      </div>
+
+      <div class="session-body">
+        <!-- Chat -->
+        <div class="chat-area">
+          <div id="messages" class="messages"></div>
+          <div class="input-area">
+            <select id="agent-select"></select>
+            <input id="chat-input" type="text" placeholder="Send a prompt to your agent..." />
+            <button id="btn-send" class="primary">Send</button>
+            <button id="btn-stop">Stop</button>
+          </div>
+        </div>
+
+        <!-- Right panel -->
+        <div class="right-panel">
+          <div class="panel-section">
+            <h3>Files</h3>
+            <div id="file-tree" class="file-tree"></div>
+          </div>
+          <div class="panel-section">
+            <h3>Git</h3>
+            <div id="git-branch" class="git-info">—</div>
+            <div id="git-status" class="git-status"></div>
+            <div class="git-actions">
+              <button data-action="commit" class="primary small">Approve &amp; Commit</button>
+              <button data-action="discard" class="small">Discard</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- ─── New Session Modal ─── -->
+<div id="modal-overlay" class="overlay" style="display:none">
+  <div class="overlay-card">
+    <h2>New Session</h2>
+    <label>Session name
+      <input id="new-name" type="text" placeholder="my-project">
+    </label>
+    <label>Project source</label>
+    <div class="radio-group">
+      <label><input type="radio" name="proj-type" value="fresh" checked> Fresh project</label>
+      <label><input type="radio" name="proj-type" value="local"> Local directory</label>
+      <label><input type="radio" name="proj-type" value="clone"> Clone from URL</label>
+    </div>
+    <input id="new-workdir" type="text" placeholder="/path/to/project" style="display:none">
+    <input id="new-clone-url" type="text" placeholder="https://github.com/org/repo.git" style="display:none">
+    <label>Agent
+      <select id="agent-picker"></select>
+    </label>
+    <div class="modal-actions">
+      <button data-action="cancel">Cancel</button>
+      <button data-action="create" class="primary">Create &amp; Start</button>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="app.mjs"></script>
+</body>
+</html>
