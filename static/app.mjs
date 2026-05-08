@@ -60,7 +60,16 @@ async function loadSessions() {
     const res = await fetch(`${API}/api/sessions`);
     const sessions = await res.json();
     const list = document.getElementById("session-list");
+    const emptyState = document.getElementById("empty-state");
     list.innerHTML = "";
+
+    // Show/hide sidebar empty state
+    if (sessions.length > 0) {
+      emptyState.style.display = "none";
+    } else {
+      emptyState.style.display = "";
+    }
+
     sessions.forEach(s => {
       const div = document.createElement("div");
       div.className = `session-item ${currentSession?.id === s.id ? "active" : ""}`;
@@ -69,7 +78,9 @@ async function loadSessions() {
       div.addEventListener("click", () => selectSession(s.id));
       list.appendChild(div);
     });
-  } catch {}
+  } catch (e) {
+    console.error("Failed to load sessions:", e);
+  }
 }
 
 async function selectSession(id) {
@@ -79,8 +90,9 @@ async function selectSession(id) {
     localStorage.setItem("made-last-session", id);
   } catch { return; }
 
-  // Show session view
+  // Show session view, hide the no-session placeholder
   document.getElementById("empty-state").style.display = "none";
+  document.getElementById("no-session").style.display = "none";
   document.getElementById("session-view").style.display = "flex";
   document.getElementById("session-name").textContent = currentSession.name;
   document.getElementById("session-agent").textContent = currentSession.agentId;
@@ -136,6 +148,9 @@ function connectWS(sessionId) {
       currentStreamOutput += msg.content || "";
     } else if (msg.type === "agent_done") {
       handleAgentDone(msg, sessionId);
+    } else if (msg.type === "chat_message") {
+      // Other user's chat message via WebSocket
+      if (msg.userId !== currentUser?.name) appendMessage(msg);
     } else if (msg.type === "connected") {
       console.log("WS connected to session", sessionId);
     }
@@ -152,7 +167,7 @@ function connectWS(sessionId) {
 function handleAgentDone(msg, sessionId) {
   setAgentStatus("idle");
   document.getElementById("btn-stop").style.display = "none";
-  document.getElementById("btn-send").style.display = "";
+  document.getElementById("btn-agent").style.display = "";
 
   const exitCode = msg.metadata?.exitCode ?? 0;
   const output = currentStreamOutput || msg.content || "";
@@ -252,23 +267,46 @@ function escapeHtml(text) {
   return el.innerHTML;
 }
 
-// ─── Prompt ─────────────────────────────────────────────
-async function sendPrompt() {
+// ─── Chat Message (no agent) ────────────────────────────
+async function sendChat() {
   if (!currentSession) return;
 
   const input = document.getElementById("chat-input");
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = "";
+
+  // Show user message in chat immediately
+  appendMessage({ type: "user", userId: currentUser.name, content: text });
+
+  // Save to server as chat message (not agent prompt)
+  try {
+    await fetch(`${API}/api/sessions/${currentSession.id}/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "user", userId: currentUser.name, content: text }),
+    });
+  } catch {}
+}
+
+// ─── Agent Prompt ───────────────────────────────────────
+async function runAgent() {
+  if (!currentSession) return;
+
+  const input = document.getElementById("agent-input");
   const prompt = input.value.trim();
   if (!prompt) return;
 
   const agentId = document.getElementById("agent-select").value;
   input.value = "";
 
-  // Show user message immediately
-  appendMessage({ type: "user", userId: currentUser.name, content: prompt });
+  // Show the agent prompt in chat so everyone sees what was requested
+  appendMessage({ type: "user", userId: currentUser.name, content: `→ ${agentId}: ${prompt}` });
 
   lastStreamDiv = null;
-  document.getElementById("btn-send").style.display = "none";
+  document.getElementById("btn-agent").style.display = "none";
   document.getElementById("btn-stop").style.display = "";
+  setAgentStatus("working");
 
   try {
     await fetch(`${API}/api/sessions/${currentSession.id}/agent`, {
@@ -277,9 +315,10 @@ async function sendPrompt() {
       body: JSON.stringify({ prompt, userId: currentUser.name, agentId }),
     });
   } catch (e) {
-    appendMessage({ type: "error", userId: "system", content: `Failed: ${e.message}` });
-    document.getElementById("btn-send").style.display = "";
+    appendMessage({ type: "error", userId: "system", content: `Agent failed: ${e.message}` });
+    document.getElementById("btn-agent").style.display = "";
     document.getElementById("btn-stop").style.display = "none";
+    setAgentStatus("error");
   }
 }
 
@@ -287,30 +326,44 @@ async function abortAgent() {
   if (!currentSession) return;
   await fetch(`${API}/api/sessions/${currentSession.id}/exec/abort`, { method: "POST" });
   document.getElementById("btn-stop").style.display = "none";
-  document.getElementById("btn-send").style.display = "";
+  document.getElementById("btn-agent").style.display = "";
   setAgentStatus("idle");
 }
 
 // ─── Files ──────────────────────────────────────────────
 async function loadFiles(sessionId, path) {
+  const tree = document.getElementById("file-tree");
   try {
     const res = await fetch(`${API}/api/sessions/${sessionId}/files?path=${encodeURIComponent(path)}`);
     const entries = await res.json();
-    if (!Array.isArray(entries)) return;
 
-    const tree = document.getElementById("file-tree");
+    // Server returned an error object instead of array
+    if (!Array.isArray(entries)) {
+      const errMsg = entries?.error?.message || "Unable to load files (invalid work directory)";
+      tree.innerHTML = `<div class="file-error">⚠ ${escapeHtml(errMsg)}</div>`;
+      return;
+    }
+
     tree.innerHTML = "";
-    entries
-      .filter(e => !e.name.startsWith(".") && e.name !== "node_modules")
-      .forEach(e => {
-        const div = document.createElement("div");
-        const isChanged = changedFileList.some(cf => cf.path === `${path}/${e.name}`.replace(/^\//, ""));
-        div.className = `file-entry ${e.type === "dir" ? "dir" : ""} ${isChanged ? "changed" : ""}`;
-        div.textContent = `${e.type === "dir" ? "📁" : "📄"} ${e.name} ${e.size ? `(${formatSize(e.size)})` : ""}`;
-        div.addEventListener("click", () => fileClick(sessionId, `${path}/${e.name}`, e.type === "dir"));
-        tree.appendChild(div);
-      });
-  } catch {}
+
+    // Show empty message if directory has no visible entries
+    const visible = entries.filter(e => !e.name.startsWith(".") && e.name !== "node_modules");
+    if (visible.length === 0) {
+      tree.innerHTML = '<div class="file-empty">Empty directory</div>';
+      return;
+    }
+
+    visible.forEach(e => {
+      const div = document.createElement("div");
+      const isChanged = changedFileList.some(cf => cf.path === `${path}/${e.name}`.replace(/^\//, ""));
+      div.className = `file-entry ${e.type === "dir" ? "dir" : ""} ${isChanged ? "changed" : ""}`;
+      div.textContent = `${e.type === "dir" ? "📁" : "📄"} ${e.name} ${e.size ? `(${formatSize(e.size)})` : ""}`;
+      div.addEventListener("click", () => fileClick(sessionId, `${path}/${e.name}`, e.type === "dir"));
+      tree.appendChild(div);
+    });
+  } catch (e) {
+    tree.innerHTML = `<div class="file-error">⚠ Failed to load files: ${escapeHtml(e.message)}</div>`;
+  }
 }
 
 function fileClick(sessionId, path, isDir) {
@@ -339,7 +392,13 @@ async function loadGitStatus(sessionId) {
   try {
     const res = await fetch(`${API}/api/sessions/${sessionId}/git/status`);
     const data = await res.json();
-    if (data.error) return;
+    if (data.error) {
+      document.getElementById("git-branch").textContent = "Git unavailable";
+      document.getElementById("git-status").textContent = data.error.message || "Git error";
+      changedFileList = [];
+      renderChangedFiles(changedFileList);
+      return;
+    }
 
     // Update branch info
     if (data.branch) {
@@ -355,7 +414,12 @@ async function loadGitStatus(sessionId) {
     if (data.lastCommit) {
       statusEl.textContent = data.lastCommit;
     }
-  } catch {}
+  } catch (e) {
+    document.getElementById("git-branch").textContent = "Git unavailable";
+    document.getElementById("git-status").textContent = e.message || "Failed to load git status";
+    changedFileList = [];
+    renderChangedFiles(changedFileList);
+  }
 }
 
 function parseGitStatus(raw) {
@@ -614,7 +678,11 @@ function setAgentStatus(status) {
 document.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && document.activeElement === document.getElementById("chat-input")) {
     e.preventDefault();
-    sendPrompt();
+    sendChat();
+  }
+  if (e.key === "Enter" && document.activeElement === document.getElementById("agent-input")) {
+    e.preventDefault();
+    runAgent();
   }
   if (e.key === "Escape") {
     hideModal();
@@ -623,7 +691,8 @@ document.addEventListener("keydown", (e) => {
 });
 
 // Wire buttons (module functions aren't global, so no onclick in HTML)
-document.getElementById("btn-send")?.addEventListener("click", sendPrompt);
+document.getElementById("btn-send")?.addEventListener("click", sendChat);
+document.getElementById("btn-agent")?.addEventListener("click", runAgent);
 document.getElementById("btn-stop")?.addEventListener("click", abortAgent);
 document.getElementById("btn-new-session")?.addEventListener("click", showNewSessionModal);
 

@@ -111,14 +111,9 @@ body { font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace; backgrou
 /* Input area */
 .input-area {
   display: flex; gap: 8px;
-  padding: 12px 16px;
+  padding: 10px 16px;
   background: var(--surface);
   border-top: 1px solid var(--border);
-}
-.input-area select {
-  padding: 8px; background: var(--surface2);
-  color: var(--text); border: 1px solid var(--border);
-  border-radius: var(--radius); font-size: 12px;
 }
 .input-area input {
   flex: 1; padding: 8px 12px;
@@ -127,6 +122,24 @@ body { font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace; backgrou
   font-family: inherit; font-size: 13px;
 }
 .input-area input:focus { outline: none; border-color: var(--accent); }
+.agent-bar {
+  display: flex; gap: 8px;
+  padding: 8px 16px 12px;
+  background: var(--surface);
+}
+.agent-bar select {
+  padding: 8px; background: var(--surface2);
+  color: var(--text); border: 1px solid var(--border);
+  border-radius: var(--radius); font-size: 12px;
+  min-width: 110px;
+}
+.agent-bar input {
+  flex: 1; padding: 8px 12px;
+  background: var(--surface2); color: var(--text);
+  border: 1px solid var(--accent); border-radius: var(--radius);
+  font-family: inherit; font-size: 13px;
+}
+.agent-bar input:focus { outline: none; border-color: var(--green); }
 
 /* Buttons */
 .primary {
@@ -149,6 +162,8 @@ body { font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace; backgrou
 .file-entry { padding: 3px 8px; cursor: pointer; border-radius: 3px; }
 .file-entry:hover { background: var(--surface2); }
 .file-entry.dir { color: var(--text2); font-weight: 500; }
+.file-error { font-size: 11px; color: var(--red); padding: 4px 8px; line-height: 1.4; }
+.file-empty { font-size: 11px; color: var(--text2); padding: 4px 8px; font-style: italic; }
 .git-info { font-size: 12px; color: var(--text2); margin-bottom: 8px; }
 .git-status { font-size: 11px; max-height: 150px; overflow-y: auto; }
 .git-actions { display: flex; gap: 6px; margin-top: 8px; }
@@ -194,6 +209,14 @@ body { font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace; backgrou
 }
 .agent-option:hover { background: var(--surface2); }
 .agent-option.unavailable { opacity: 0.4; cursor: default; }
+.agent-picker-list {
+  max-height: 180px; overflow-y: auto;
+  margin-top: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 4px;
+  background: var(--surface2);
+}
 .dot { width: 6px; height: 6px; border-radius: 50%; }
 .dot.on { background: var(--green); }
 .dot.off { background: var(--red); }

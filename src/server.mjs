@@ -193,6 +193,21 @@ function handleAPI(req, res, urlPath, method) {
 
   // GET messages
   if (subPath === "/messages" && method === "GET") return json(res, loadMessages(sessionId));
+  if (subPath === "/messages" && method === "POST") {
+    return readBody().then(body => {
+      const msg = {
+        type: body.type || "user",
+        userId: body.userId || "anonymous",
+        content: body.content || "",
+        ts: Date.now(),
+      };
+      const data = loadMessages(sessionId);
+      data.push(msg);
+      saveMessages(sessionId, data);
+      broadcast(sessionId, { type: "chat_message", ...msg });
+      json(res, { ok: true });
+    });
+  }
 
   // ── Agent start
   if (subPath === "/agent" && method === "POST") {

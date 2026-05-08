@@ -59,10 +59,14 @@
         <div class="chat-area">
           <div id="messages" class="messages"></div>
           <div class="input-area">
-            <select id="agent-select"></select>
-            <input id="chat-input" type="text" placeholder="Send a prompt to your agent..." />
+            <input id="chat-input" type="text" placeholder="Type a message..." />
             <button id="btn-send" class="primary">Send</button>
-            <button id="btn-stop">Stop</button>
+          </div>
+          <div class="agent-bar">
+            <select id="agent-select"></select>
+            <input id="agent-input" type="text" placeholder="Agent prompt (e.g. fix the login bug)..." />
+            <button id="btn-agent" class="accent">Run Agent</button>
+            <button id="btn-stop" style="display:none">Stop</button>
           </div>
         </div>
 
@@ -114,7 +118,7 @@
     <input id="new-workdir" type="text" placeholder="/path/to/project" style="display:none">
     <input id="new-clone-url" type="text" placeholder="https://github.com/org/repo.git" style="display:none">
     <label>Agent
-      <select id="agent-picker"></select>
+      <div id="agent-picker" class="agent-picker-list"></div>
     </label>
     <div class="modal-actions">
       <button data-action="cancel">Cancel</button>
