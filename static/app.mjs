@@ -107,6 +107,14 @@ function connectWS(sessionId) {
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
   ws = new WebSocket(`${proto}//${location.host}/ws?sessionId=${sessionId}`);
 
+  ws.onopen = () => {
+    console.log(`WS connected to session ${sessionId}`);
+  };
+
+  ws.onerror = (err) => {
+    console.error("WS error:", err);
+  };
+
   ws.onmessage = (event) => {
     const msg = JSON.parse(event.data);
     if (msg.type === "agent_start") {
@@ -364,7 +372,7 @@ function setAgentStatus(status) {
   el.textContent = status === "working" ? "Agent working..." : status === "error" ? "Agent error" : "Agent idle";
 }
 
-// ─── Keyboard ───────────────────────────────────────────
+// ─── Keyboard + Buttons ────────────────────────────────
 document.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && document.activeElement === document.getElementById("chat-input")) {
     e.preventDefault();
@@ -374,4 +382,19 @@ document.addEventListener("keydown", (e) => {
     hideModal();
     document.getElementById("onboard-overlay").style.display = "none";
   }
+});
+
+// Wire buttons (module functions aren't global, so no onclick in HTML)
+document.getElementById("btn-send")?.addEventListener("click", sendPrompt);
+document.getElementById("btn-stop")?.addEventListener("click", abortAgent);
+document.getElementById("btn-new-session")?.addEventListener("click", showNewSessionModal);
+document.querySelectorAll("[data-action='new-session']").forEach(el => el.addEventListener("click", showNewSessionModal));
+document.querySelectorAll("[data-action='cancel']").forEach(el => el.addEventListener("click", hideModal));
+document.querySelectorAll("[data-action='create']").forEach(el => el.addEventListener("click", createSession));
+document.querySelectorAll("[data-action='onboard']").forEach(el => el.addEventListener("click", completeOnboarding));
+document.querySelectorAll("[data-action='commit']").forEach(el => el.addEventListener("click", commitChanges));
+document.querySelectorAll("[data-action='discard']").forEach(el => el.addEventListener("click", discardChanges));
+// Also support buttons that just have the right ID/text
+document.querySelectorAll("button").forEach(btn => {
+  if (btn.textContent.trim() === "Create your first session") btn.addEventListener("click", showNewSessionModal);
 });

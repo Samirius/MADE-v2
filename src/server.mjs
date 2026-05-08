@@ -352,6 +352,7 @@ wss.on("connection", (ws, req) => {
   if (!sessionId) { ws.close(4002, "Missing sessionId"); return; }
 
   clients.set(ws, { sessionId });
+  console.log(`WS connected: session=${sessionId} (${clients.size} total clients)`);
   ws.send(JSON.stringify({ type: "connected", sessionId }));
 
   ws.on("message", raw => {
