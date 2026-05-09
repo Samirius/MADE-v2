@@ -5,8 +5,11 @@ services:
       - "3100:3100"
     volumes:
       - made-data:/app/.made-data
-    env_file:
-      - .env
+      - ./projects:/projects
+    environment:
+      - MADE_HOST=0.0.0.0
+      - MADE_PORT=3100
+      # - MADE_TOKEN=your-secret-token  # uncomment to enable auth
     restart: unless-stopped
 
 volumes:
