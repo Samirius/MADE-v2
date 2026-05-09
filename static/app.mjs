@@ -12,11 +12,11 @@ let lastStreamDiv = null;
 let currentStreamOutput = "";
 
 // ─── Utility ───────────────────────────────────────────────
+// M-10 fix: proper escape function, works for both HTML body and attributes
+const _escMap = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 function escapeHtml(text) {
   if (text == null) return "";
-  const el = document.createElement("span");
-  el.textContent = String(text);
-  return el.innerHTML;
+  return String(text).replace(/[&<>"']/g, c => _escMap[c]);
 }
 
 function formatTime(ts) {
@@ -252,6 +252,7 @@ function connectWS(sessionId) {
 
   ws.onopen = () => {
     setConnectionStatus("connected");
+    window._wsRetries = 0; // reset on successful connect
   };
 
   ws.onerror = () => {
@@ -279,9 +280,14 @@ function connectWS(sessionId) {
 
   ws.onclose = () => {
     setConnectionStatus("disconnected");
+    // M-03 fix: exponential backoff with max retries
+    if (!window._wsRetries) window._wsRetries = 0;
+    window._wsRetries++;
+    if (window._wsRetries > 10) return; // give up after 10 attempts
+    const delay = Math.min(3000 * Math.pow(1.5, window._wsRetries - 1), 30000);
     setTimeout(() => {
       if (currentSession?.id === sessionId) connectWS(sessionId);
-    }, 3000);
+    }, delay);
   };
 }
 
@@ -881,7 +887,8 @@ function filterDiffForFile(diff, filePath) {
     if (inFile) result.push(line);
   }
 
-  return result.length > 0 ? result.join("\n") : diff;
+  // M-05 fix: return message instead of full diff if file not found
+  return result.length > 0 ? result.join("\n") : `No diff found for ${filePath}`;
 }
 
 // ─── Commit / Discard ─────────────────────────────────────
@@ -1004,7 +1011,7 @@ async function createSession() {
       $("new-clone-url").focus();
       return;
     }
-    showToast("Clone not yet implemented. Clone manually and use local path.", "error", 6000);
+    showToast("Clone the repo locally first, then use Local directory.", "info", 4000);
     return;
   } else {
     // Fresh project: create a workspace directory under MADE_DATA_DIR/workspaces/

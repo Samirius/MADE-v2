@@ -18,6 +18,13 @@ const ADAPTER_CLASSES = [
   GenericAdapter,
 ];
 
+// H-04 fix: build ID → Class map once, no double instantiation
+const ADAPTER_MAP = new Map();
+for (const Cls of ADAPTER_CLASSES) {
+  const tmp = new Cls('/tmp');
+  ADAPTER_MAP.set(tmp.id, Cls);
+}
+
 /** Cache of detection results keyed by id */
 let _detectionCache = null;
 
@@ -31,7 +38,6 @@ export function detectAll() {
 
   const results = [];
   for (const Cls of ADAPTER_CLASSES) {
-    // Work dir doesn't matter for detection
     const adapter = new Cls('/tmp');
     results.push(adapter.detect());
   }
@@ -46,20 +52,11 @@ export function forceRedetect() {
 
 /**
  * Create an adapter instance for the given agent id and workDir.
- * @param {string} agentId
- * @param {string} workDir
- * @returns {import('./adapter.mjs').AgentAdapter}
+ * Single lookup, single instantiation.
  */
 export function resolveAdapter(agentId, workDir) {
-  for (const Cls of ADAPTER_CLASSES) {
-    if (Cls === GenericAdapter) continue; // check concrete ones first
-    const tmp = new Cls(workDir);
-    if (tmp.id === agentId) {
-      return new Cls(workDir);
-    }
-  }
-  // Fallback to generic
-  return new GenericAdapter(workDir);
+  const Cls = ADAPTER_MAP.get(agentId);
+  return Cls ? new Cls(workDir) : new GenericAdapter(workDir);
 }
 
 export default { detectAll, forceRedetect, resolveAdapter };

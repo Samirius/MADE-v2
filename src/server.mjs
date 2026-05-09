@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { join, resolve, relative, extname, basename, sep } from "node:path";
-import { execSync, spawn } from "node:child_process";
+import { execSync, spawn, execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { WebSocketServer } from "ws";
 
@@ -10,6 +10,10 @@ import { resolveAdapter, detectAll } from "./agent/registry.mjs";
 // ─── Config ──────────────────────────────────────────────
 const PORT = parseInt(process.env.MADE_PORT || "3100", 10);
 const HOST = process.env.MADE_HOST || "127.0.0.1";
+
+// M-11 fix: safe URL construction with fallback host
+const getHost = (req) => req.headers.host || `${HOST}:${PORT}`;
+const reqUrl = (req) => new URL(req.url, `http://${getHost(req)}`);
 const TOKEN = process.env.MADE_TOKEN || "";
 const CORS_ORIGIN = process.env.MADE_CORS_ORIGIN || "";
 const DATA_DIR = process.env.MADE_DATA_DIR || ".made-data";
@@ -22,6 +26,14 @@ function ensureDataDir() {
   if (!existsSync(join(DATA_DIR, "sessions.json"))) {
     writeFileSync(join(DATA_DIR, "sessions.json"), "[]");
   }
+}
+
+// H-02 fix: simple per-key write lock to prevent TOCTOU races
+const _locks = new Map();
+async function withLock(key, fn) {
+  while (_locks.has(key)) await new Promise(r => setTimeout(r, 10));
+  _locks.set(key, true);
+  try { return await fn(); } finally { _locks.delete(key); }
 }
 
 function loadSessions() {
@@ -43,10 +55,12 @@ function saveMessages(sessionId, messages) {
   writeFileSync(join(DATA_DIR, "messages", `${sessionId}.json`), JSON.stringify(messages, null, 2));
 }
 
-function appendMessage(sessionId, msg) {
-  const messages = loadMessages(sessionId);
-  messages.push(msg);
-  saveMessages(sessionId, messages);
+async function appendMessage(sessionId, msg) {
+  return withLock(`msg:${sessionId}`, () => {
+    const messages = loadMessages(sessionId);
+    messages.push(msg);
+    saveMessages(sessionId, messages);
+  });
 }
 
 function nanoid(len = 8) {
@@ -70,14 +84,14 @@ function checkAuth(req) {
   if (!TOKEN) return true;
   const header = req.headers.authorization || "";
   if (header.startsWith("Bearer ") && header.slice(7) === TOKEN) return true;
-  const url = new URL(req.url, `http://${req.headers.host}`);
+  const url = reqUrl(req);
   if (url.searchParams.get("token") === TOKEN) return true;
   return false;
 }
 
 // ─── HTTP Helpers ────────────────────────────────────────
 function json(res, data, status = 200) {
-  res.writeHead(status, { "Content-Type": "application/json" });
+  res.writeHead(status, { "Content-Type": "application/json", "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self' ws: wss:" });
   res.end(JSON.stringify(data));
 }
 
@@ -102,7 +116,7 @@ const MIME = {
 const runningAgents = new Map(); // sessionId → { process, adapter }
 
 // ─── Route Handler ──────────────────────────────────────
-function handleAPI(req, res, urlPath, method) {
+async function handleAPI(req, res, urlPath, method) {
   // CORS preflight
   if (method === "OPTIONS") { corsHeaders(req, res); res.writeHead(204); res.end(); return; }
   corsHeaders(req, res);
@@ -141,7 +155,7 @@ function handleAPI(req, res, urlPath, method) {
   }
 
   if (urlPath === "/api/sessions" && method === "POST") {
-    return readBody().then(body => {
+    return readBody().then(async (body) => {
       const name = body.name || "Untitled";
       let workDir = body.workDir;
       if (!workDir || workDir === "__fresh__") {
@@ -156,9 +170,6 @@ function handleAPI(req, res, urlPath, method) {
       const agentId = body.agentId || "hermes";
       const userId = body.userId || "anonymous";
 
-      // Validate workDir exists
-      if (!existsSync(workDir)) return json(res, { error: { code: "INVALID_PATH", message: `Path does not exist: ${workDir}` } }, 400);
-
       const session = {
         id: nanoid(8),
         name,
@@ -170,9 +181,11 @@ function handleAPI(req, res, urlPath, method) {
         updatedAt: new Date().toISOString(),
       };
 
-      const sessions = loadSessions();
-      sessions.push(session);
-      saveSessions(sessions);
+      await withLock("sessions", () => {
+        const sessions = loadSessions();
+        sessions.push(session);
+        saveSessions(sessions);
+      });
       saveMessages(session.id, [{
         id: nanoid(12),
         sessionId: session.id,
@@ -204,8 +217,10 @@ function handleAPI(req, res, urlPath, method) {
 
   // DELETE session
   if (subPath === "" && method === "DELETE") {
-    const filtered = sessions.filter(s => s.id !== sessionId);
-    saveSessions(filtered);
+    await withLock("sessions", () => {
+      const filtered = loadSessions().filter(s => s.id !== sessionId);
+      saveSessions(filtered);
+    });
     try { unlinkSync(join(DATA_DIR, "messages", `${sessionId}.json`)); } catch {}
     res.writeHead(204); res.end(); return;
   }
@@ -311,7 +326,7 @@ function handleAPI(req, res, urlPath, method) {
 
   // ── File browser
   if (subPath === "/files" && method === "GET") {
-    const url = new URL(req.url, `http://${req.headers.host}`);
+    const url = reqUrl(req);
     const dirPath = url.searchParams.get("path") || "";
     const fullDir = join(session.workDir, dirPath);
     if (!isPathSafe(session.workDir, dirPath || ".")) return json(res, { error: { code: "FORBIDDEN", message: "Path outside workDir" } }, 403);
@@ -329,7 +344,7 @@ function handleAPI(req, res, urlPath, method) {
 
   // ── Read file
   if (subPath === "/file" && method === "GET") {
-    const url = new URL(req.url, `http://${req.headers.host}`);
+    const url = reqUrl(req);
     const filePath = url.searchParams.get("path") || "";
     if (!isPathSafe(session.workDir, filePath)) return json(res, { error: { code: "FORBIDDEN", message: "Path outside workDir" } }, 403);
     const fullPath = join(session.workDir, filePath);
@@ -376,7 +391,8 @@ function handleAPI(req, res, urlPath, method) {
       const message = body.message || "Changes from MADE agent";
       try {
         execSync("git add -A", { cwd: session.workDir });
-        execSync(`git commit -m ${JSON.stringify(message)}`, { cwd: session.workDir });
+        // M-08 fix: use execFileSync to avoid shell injection
+        execFileSync("git", ["commit", "-m", message], { cwd: session.workDir });
         const sha = execSync("git rev-parse --short HEAD", { cwd: session.workDir, encoding: "utf-8" }).trim();
         return json(res, { ok: true, sha });
       } catch (e) { return json(res, { error: { code: "GIT_ERROR", message: e.message } }, 500); }
@@ -399,7 +415,7 @@ function broadcast(sessionId, msg) {
 }
 
 wss.on("connection", (ws, req) => {
-  const url = new URL(req.url, `http://${req.headers.host}`);
+  const url = reqUrl(req);
   const sessionId = url.searchParams.get("sessionId");
   const token = url.searchParams.get("token");
 
@@ -407,7 +423,7 @@ wss.on("connection", (ws, req) => {
   if (!sessionId) { ws.close(4002, "Missing sessionId"); return; }
 
   clients.set(ws, { sessionId });
-  console.log(`WS connected: session=${sessionId} (${clients.size} total clients)`);
+  if (process.env.MADE_VERBOSE) console.log(`WS connected: session=${sessionId} (${clients.size} total clients)`);
   ws.send(JSON.stringify({ type: "connected", sessionId }));
 
   ws.on("message", raw => {
@@ -422,8 +438,8 @@ wss.on("connection", (ws, req) => {
 
 // ─── Static File Server ──────────────────────────────────
 function serveStatic(req, res) {
-  const url = new URL(req.url, `http://${req.headers.host}`);
-  let filePath = url.pathname === "/" ? "/index.html" : url.pathname;
+  const url = reqUrl(req);
+  let filePath = url.pathname === "/" ? "index.html" : url.pathname.slice(1); // strip leading /
   const fullPath = resolve("static", filePath);
 
   // C-01 fix: prevent path traversal outside static/
@@ -456,8 +472,8 @@ function serveStatic(req, res) {
 // ─── Main Server ─────────────────────────────────────────
 ensureDataDir();
 
-const server = createServer((req, res) => {
-  const url = new URL(req.url, `http://${req.headers.host}`);
+const server = createServer(async (req, res) => {
+  const url = reqUrl(req);
   const urlPath = url.pathname;
   const method = req.method;
 
@@ -472,7 +488,7 @@ const server = createServer((req, res) => {
 
 // WebSocket upgrade
 server.on("upgrade", (req, socket, head) => {
-  if (new URL(req.url, `http://${req.headers.host}`).pathname === "/ws") {
+  if (reqUrl(req).pathname === "/ws") {
     wss.handleUpgrade(req, socket, head, ws => wss.emit("connection", ws, req));
   }
 });

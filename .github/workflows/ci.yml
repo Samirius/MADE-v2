@@ -20,8 +20,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Lint (syntax check)
-        run: node --check src/server.mjs && node --check src/agent/registry.mjs
+      - name: Syntax check all .mjs files
+        run: find src -name '*.mjs' -exec node --check {} +
+
+      - name: Syntax check frontend
+        run: node --check static/app.mjs
+
+      - name: Import resolution check
+        run: node -e "import('./src/agent/registry.mjs').catch(e => { console.error(e); process.exit(1) })"
 
       - name: Run tests
         run: npm test
