@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
-import { join, resolve, relative, extname, basename } from "node:path";
+import { join, resolve, relative, extname, basename, sep } from "node:path";
 import { execSync, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { WebSocketServer } from "ws";
@@ -56,7 +56,8 @@ function nanoid(len = 8) {
 // ─── Security ────────────────────────────────────────────
 function isPathSafe(workDir, requestedPath) {
   const resolved = resolve(workDir, requestedPath);
-  return resolved.startsWith(resolve(workDir));
+  const base = resolve(workDir);
+  return resolved === base || resolved.startsWith(base + sep);
 }
 
 const DANGEROUS_PATTERNS = [/\brm\s+-rf\s+\//i, /\bsudo\b/i, /\bmkfs\b/i, /\bdd\s+if=/i];
@@ -110,10 +111,17 @@ function handleAPI(req, res, urlPath, method) {
   if (TOKEN && !checkAuth(req)) return json(res, { error: { code: "UNAUTHORIZED", message: "Invalid or missing token" } }, 401);
 
   // Read body for POST
-  const readBody = () => new Promise((resolve) => {
+  const readBody = () => new Promise((resolve, reject) => {
     let body = "";
-    req.on("data", chunk => body += chunk);
+    let size = 0;
+    const MAX_BODY = 1 << 20; // 1MB limit
+    req.on("data", chunk => {
+      size += chunk.length;
+      if (size > MAX_BODY) { req.destroy(); reject(new Error("Body too large")); return; }
+      body += chunk;
+    });
     req.on("end", () => { try { resolve(JSON.parse(body)); } catch { resolve({}); } });
+    req.on("error", reject);
   });
 
   // ── Health
@@ -184,6 +192,8 @@ function handleAPI(req, res, urlPath, method) {
   if (!sessionMatch) return json(res, { error: { code: "NOT_FOUND", message: "Not found" } }, 404);
 
   const sessionId = sessionMatch[1];
+  // C-03 fix: validate sessionId is safe for filenames
+  if (!/^[a-zA-Z0-9_-]+$/.test(sessionId)) return json(res, { error: { code: "INVALID_SESSION", message: "Invalid session ID format" } }, 400);
   const subPath = sessionMatch[2];
   const sessions = loadSessions();
   const session = sessions.find(s => s.id === sessionId);
@@ -197,7 +207,7 @@ function handleAPI(req, res, urlPath, method) {
     const filtered = sessions.filter(s => s.id !== sessionId);
     saveSessions(filtered);
     try { unlinkSync(join(DATA_DIR, "messages", `${sessionId}.json`)); } catch {}
-    return json(res, { ok: true }, 204);
+    res.writeHead(204); res.end(); return;
   }
 
   // GET messages
@@ -205,10 +215,11 @@ function handleAPI(req, res, urlPath, method) {
   if (subPath === "/messages" && method === "POST") {
     return readBody().then(body => {
       const msg = {
+        id: nanoid(12),
         type: body.type || "user",
         userId: body.userId || "anonymous",
         content: body.content || "",
-        ts: Date.now(),
+        timestamp: new Date().toISOString(),
       };
       const data = loadMessages(sessionId);
       data.push(msg);
@@ -235,12 +246,10 @@ function handleAPI(req, res, urlPath, method) {
         runningAgents.delete(sessionId);
       }
 
-      const adapter = resolveAdapter(agentId);
+      const adapter = resolveAdapter(agentId, session.workDir);
       if (!adapter || !adapter.detect().available) {
         return json(res, { error: { code: "AGENT_UNAVAILABLE", message: `Agent ${agentId} not available` } }, 400);
       }
-
-      adapter.workDir = session.workDir;
       // Build full prompt with conversation context
       let fullPrompt = "";
       if (history.length > 0) {
@@ -404,10 +413,7 @@ wss.on("connection", (ws, req) => {
   ws.on("message", raw => {
     try {
       const msg = JSON.parse(raw);
-      if (msg.type === "prompt") {
-        // Forward to agent endpoint logic
-        handleAPI.__agentFromWS(sessionId, msg);
-      }
+      // WS messages are for broadcasting only — prompts go via HTTP POST /agent
     } catch {}
   });
 
@@ -418,7 +424,13 @@ wss.on("connection", (ws, req) => {
 function serveStatic(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
   let filePath = url.pathname === "/" ? "/index.html" : url.pathname;
-  const fullPath = join("static", filePath);
+  const fullPath = resolve("static", filePath);
+
+  // C-01 fix: prevent path traversal outside static/
+  const staticRoot = resolve("static");
+  if (!fullPath.startsWith(staticRoot + sep) && fullPath !== staticRoot) {
+    return json(res, { error: { code: "FORBIDDEN", message: "Path outside static directory" } }, 403);
+  }
 
   if (!existsSync(fullPath) || statSync(fullPath).isDirectory()) {
     // SPA fallback
