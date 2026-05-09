@@ -405,6 +405,61 @@ function appendCommandCard(exitCode, output) {
   container.scrollTop = container.scrollHeight;
 }
 
+function appendAgentCard(prompt, output, exitCode) {
+  const container = $("messages");
+  const success = exitCode === 0;
+  const lines = output.split("\n");
+  const isLong = lines.length > 10;
+
+  // User's prompt as a message
+  const promptDiv = document.createElement("div");
+  promptDiv.className = "msg msg-user";
+  promptDiv.innerHTML =
+    `<div class="msg-header"><span class="msg-label">${escapeHtml(currentUser?.name || "user")}</span></div>` +
+    `<div class="msg-content">${escapeHtml(prompt)}</div>`;
+  container.appendChild(promptDiv);
+
+  // Agent response card
+  const card = document.createElement("div");
+  card.className = "msg msg-agent";
+
+  const header = document.createElement("div");
+  header.className = "msg-header";
+
+  const badge = document.createElement("span");
+  badge.className = `exit-badge ${success ? "success" : "failure"}`;
+  badge.textContent = `exit ${exitCode}`;
+
+  const label = document.createElement("span");
+  label.className = "msg-label";
+  label.textContent = "agent";
+
+  const toggleBtn = document.createElement("span");
+  toggleBtn.className = "cmd-card-toggle";
+  toggleBtn.textContent = isLong ? "▶" : "";
+  toggleBtn.style.cursor = isLong ? "pointer" : "default";
+
+  header.appendChild(label);
+  header.appendChild(badge);
+  if (isLong) header.appendChild(toggleBtn);
+
+  const body = document.createElement("div");
+  body.className = "msg-content";
+  if (isLong) {
+    body.classList.add("collapsed");
+    header.addEventListener("click", () => {
+      const collapsed = body.classList.toggle("collapsed");
+      toggleBtn.textContent = collapsed ? "▶" : "▼";
+    });
+  }
+  body.textContent = output;
+
+  card.appendChild(header);
+  card.appendChild(body);
+  container.appendChild(card);
+  container.scrollTop = container.scrollHeight;
+}
+
 // ─── FEATURE 8: Chat Messages with Timestamps ─────────────
 async function loadMessages(sessionId) {
   try {
@@ -413,13 +468,52 @@ async function loadMessages(sessionId) {
     const container = $("messages");
     container.innerHTML = "";
 
-    const messages = Array.isArray(data) ? data : (data.messages || []);
-    if (messages.length === 0) {
+    const raw = Array.isArray(data) ? data : (data.messages || []);
+    if (raw.length === 0) {
       container.innerHTML = '<div class="msg-empty">No messages yet. Say something or run an agent.</div>';
       return;
     }
 
-    messages.forEach(msg => appendMessage(msg));
+    // Merge consecutive agent_stream messages into single blocks
+    const merged = [];
+    for (const msg of raw) {
+      const type = msg.type === "chat_message" ? "chat" : msg.type;
+      const last = merged[merged.length - 1];
+      if (type === "agent_stream" && last && last.type === "agent_stream") {
+        // Append content to previous stream block
+        last.content += msg.content || "";
+      } else {
+        merged.push({ ...msg, type });
+      }
+    }
+
+    // Render: group agent_start + agent_stream + agent_done into one card
+    let i = 0;
+    while (i < merged.length) {
+      const msg = merged[i];
+
+      if (msg.type === "agent_start") {
+        // Collect the full agent response: start + streams + done
+        const prompt = msg.content || "";
+        let output = "";
+        let exitCode = 0;
+        i++;
+        while (i < merged.length && merged[i].type !== "agent_start" && merged[i].type !== "chat" && merged[i].type !== "system") {
+          if (merged[i].type === "agent_stream") {
+            output += merged[i].content || "";
+          } else if (merged[i].type === "agent_done") {
+            exitCode = merged[i].metadata?.exitCode ?? 0;
+          }
+          i++;
+        }
+        // Render as one card
+        appendAgentCard(prompt, output, exitCode);
+      } else {
+        appendMessage(msg);
+        i++;
+      }
+    }
+
     container.scrollTop = container.scrollHeight;
   } catch {}
 }
