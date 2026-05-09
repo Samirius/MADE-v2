@@ -1007,7 +1007,8 @@ async function createSession() {
     showToast("Clone not yet implemented. Clone manually and use local path.", "error", 6000);
     return;
   } else {
-    workDir = "";
+    // Fresh project: create a workspace directory under MADE_DATA_DIR/workspaces/
+    workDir = "__fresh__";
   }
 
   try {

@@ -135,7 +135,16 @@ function handleAPI(req, res, urlPath, method) {
   if (urlPath === "/api/sessions" && method === "POST") {
     return readBody().then(body => {
       const name = body.name || "Untitled";
-      const workDir = body.workDir || process.cwd();
+      let workDir = body.workDir;
+      if (!workDir || workDir === "__fresh__") {
+        // Fresh project: create isolated workspace directory
+        const wsDir = join(DATA_DIR, "workspaces", nanoid(8));
+        mkdirSync(wsDir, { recursive: true });
+        workDir = wsDir;
+      } else {
+        workDir = resolve(workDir);
+        if (!existsSync(workDir)) return json(res, { error: { code: "INVALID_PATH", message: `Directory does not exist: ${workDir}` } }, 400);
+      }
       const agentId = body.agentId || "hermes";
       const userId = body.userId || "anonymous";
 
