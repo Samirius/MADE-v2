@@ -331,10 +331,28 @@ async function runAgent() {
   setAgentStatus("working");
 
   try {
+    // Collect recent chat history for context
+    const msgElements = $("messages").querySelectorAll(".msg");
+    const history = [];
+    msgElements.forEach(el => {
+      const content = el.querySelector(".msg-content")?.textContent || "";
+      const label = el.querySelector(".msg-label")?.textContent || "";
+      const isAgent = el.classList.contains("msg-agent");
+      if (content && content.length < 500) {
+        history.push({
+          userId: isAgent ? "agent" : label,
+          content: content.slice(0, 200),
+          type: isAgent ? "agent_stream" : "chat"
+        });
+      }
+    });
+    // Keep last 20 messages max
+    const trimmedHistory = history.slice(-20);
+
     await fetch(`${API}/api/sessions/${currentSession.id}/agent`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt, userId: currentUser.name, agentId }),
+      body: JSON.stringify({ prompt, userId: currentUser.name, agentId, history: trimmedHistory }),
     });
   } catch (e) {
     appendMessage({ type: "error", userId: "system", content: `Agent failed: ${e.message}` });

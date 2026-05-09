@@ -215,6 +215,7 @@ function handleAPI(req, res, urlPath, method) {
       const prompt = body.prompt;
       const userId = body.userId || "anonymous";
       const agentId = body.agentId || session.agentId;
+      const history = body.history || [];
 
       if (!prompt) return json(res, { error: { code: "MISSING_PROMPT", message: "Prompt is required" } }, 400);
       if (!isCommandSafe(prompt)) return json(res, { error: { code: "UNSAFE_COMMAND", message: "Prompt contains blocked pattern" } }, 400);
@@ -231,7 +232,20 @@ function handleAPI(req, res, urlPath, method) {
       }
 
       adapter.workDir = session.workDir;
-      const proc = adapter.start(prompt);
+      // Build full prompt with conversation context
+      let fullPrompt = "";
+      if (history.length > 0) {
+        fullPrompt += "Previous conversation in this session:\n";
+        for (const msg of history) {
+          const role = msg.userId === "agent" ? "Assistant" : (msg.userId || "User");
+          if (msg.type !== "agent_start" && msg.type !== "agent_done" && msg.type !== "system") {
+            fullPrompt += `${role}: ${msg.content}\n`;
+          }
+        }
+        fullPrompt += "\n";
+      }
+      fullPrompt += prompt;
+      const proc = adapter.start(fullPrompt);
       runningAgents.set(sessionId, { process: proc, adapter });
 
       // Log start
